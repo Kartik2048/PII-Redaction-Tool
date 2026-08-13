@@ -1,0 +1,84 @@
+[
+  {
+    "section": "Corporate Information",
+    "text": "KSH INTERNATIONAL LIMITED was incorporated on July 30, 1979 under CIN U28129PN1979PLC141032. Registered Office is located at Birdewadi Pune. The company converted to public limited on June 1, 1996 and changed name on July 4, 1996. Contact: cs.connect@kshinternational.com or call + 91 20 45053237.",
+    "ground_truth_entities": [
+      {"entity_type": "ORGANIZATION", "text": "KSH INTERNATIONAL LIMITED"},
+      {"entity_type": "DATE_TIME", "text": "July 30, 1979"},
+      {"entity_type": "GOVT_ID", "text": "U28129PN1979PLC141032"},
+      {"entity_type": "LOCATION", "text": "Birdewadi Pune"},
+      {"entity_type": "DATE_TIME", "text": "June 1, 1996"},
+      {"entity_type": "DATE_TIME", "text": "July 4, 1996"},
+      {"entity_type": "EMAIL_ADDRESS", "text": "cs.connect@kshinternational.com"},
+      {"entity_type": "PHONE_NUMBER", "text": "+ 91 20 45053237"}
+    ]
+  },
+  {
+    "section": "Promoters & Key Managerial Personnel",
+    "text": "Promoter: Kushal Subbayya Hegde, Pushpa Kushal Hegde, Rajesh Kushal Hegde, and Rohit Kushal Hegde. Key Officers include Sarthak Malvadkar (Company Secretary), Rakhi Girija Shetty, Lokesh Shah, Soumavo Sarkar, and Kishan Rastogi. Group entity Waterloo Industrial Park VI Private Limited was incorporated on January 13, 2011.",
+    "ground_truth_entities": [
+      {"entity_type": "PERSON", "text": "Kushal Subbayya Hegde"},
+      {"entity_type": "PERSON", "text": "Pushpa Kushal Hegde"},
+      {"entity_type": "PERSON", "text": "Rajesh Kushal Hegde"},
+      {"entity_type": "PERSON", "text": "Rohit Kushal Hegde"},
+      {"entity_type": "PERSON", "text": "Sarthak Malvadkar"},
+      {"entity_type": "PERSON", "text": "Rakhi Girija Shetty"},
+      {"entity_type": "PERSON", "text": "Lokesh Shah"},
+      {"entity_type": "PERSON", "text": "Soumavo Sarkar"},
+      {"entity_type": "PERSON", "text": "Kishan Rastogi"},
+      {"entity_type": "ORGANIZATION", "text": "Waterloo Industrial Park VI Private Limited"},
+      {"entity_type": "DATE_TIME", "text": "January 13, 2011"}
+    ]
+  },
+  {
+    "section": "Board of Directors & Advisors",
+    "text": "Independent Directors Abhijit Diwan, Shanti Gopalkrishnan, Sandesh Bhagwat, and Amod Joshi reviewed the prospectus on December 10, 2025. Statutory Auditors Kirtane & Pandit LLP audited financial statements as of August 16, 2011 and October 13, 2011. Industry report by CARE Analytics and Advisory Private Limited was issued on December 11, 2024.",
+    "ground_truth_entities": [
+      {"entity_type": "PERSON", "text": "Abhijit Diwan"},
+      {"entity_type": "PERSON", "text": "Shanti Gopalkrishnan"},
+      {"entity_type": "PERSON", "text": "Sandesh Bhagwat"},
+      {"entity_type": "PERSON", "text": "Amod Joshi"},
+      {"entity_type": "DATE_TIME", "text": "December 10, 2025"},
+      {"entity_type": "ORGANIZATION", "text": "Kirtane & Pandit LLP"},
+      {"entity_type": "DATE_TIME", "text": "August 16, 2011"},
+      {"entity_type": "DATE_TIME", "text": "October 13, 2011"},
+      {"entity_type": "ORGANIZATION", "text": "CARE Analytics and Advisory Private Limited"},
+      {"entity_type": "DATE_TIME", "text": "December 11, 2024"}
+    ]
+  },
+  {
+    "section": "Lead Managers & Registrar",
+    "text": "Book Running Lead Managers: Nuvama Wealth Management Limited (SEBI Reg INM000013004, Phone +91 22 4009 4400 / +91 22 40094400, Email ksh.ipo@nuvama.com, Investor Grievance customerservice.mb@nuvama.com) located at Baner Pune; ICICI Securities Limited (SEBI Reg INM000011179, Phone +91 22 6807 7100, Email ksh@icicisecurities.com, Investor Grievance customercare@icicisecurities.com) located at Bandra Kurla Complex Mumbai.",
+    "ground_truth_entities": [
+      {"entity_type": "ORGANIZATION", "text": "Nuvama Wealth Management Limited"},
+      {"entity_type": "GOVT_ID", "text": "INM000013004"},
+      {"entity_type": "PHONE_NUMBER", "text": "+91 22 4009 4400"},
+      {"entity_type": "PHONE_NUMBER", "text": "+91 22 40094400"},
+      {"entity_type": "EMAIL_ADDRESS", "text": "ksh.ipo@nuvama.com"},
+      {"entity_type": "EMAIL_ADDRESS", "text": "customerservice.mb@nuvama.com"},
+      {"entity_type": "LOCATION", "text": "Baner Pune"},
+      {"entity_type": "ORGANIZATION", "text": "ICICI Securities Limited"},
+      {"entity_type": "GOVT_ID", "text": "INM000011179"},
+      {"entity_type": "PHONE_NUMBER", "text": "+91 22 6807 7100"},
+      {"entity_type": "EMAIL_ADDRESS", "text": "ksh@icicisecurities.com"},
+      {"entity_type": "EMAIL_ADDRESS", "text": "customercare@icicisecurities.com"},
+      {"entity_type": "LOCATION", "text": "Bandra Kurla Complex Mumbai"}
+    ]
+  },
+  {
+    "section": "Registrar to the Offer & Issue Schedule",
+    "text": "Registrar to the Offer: Link Intime India Private Limited / MUFG Intime India Private Limited (SEBI Reg INR000004058, Phone +91 81081 14949, Email kshinternational.ipo@in.mpms.mufg.com). Issue opening date December 15, 2025, closing date December 16, 2025, and finalization date December 18, 2025, with prospectus filing on December 19, 2024 and listing on January 20, 2025.",
+    "ground_truth_entities": [
+      {"entity_type": "ORGANIZATION", "text": "Link Intime India Private Limited"},
+      {"entity_type": "ORGANIZATION", "text": "MUFG Intime India Private Limited"},
+      {"entity_type": "GOVT_ID", "text": "INR000004058"},
+      {"entity_type": "PHONE_NUMBER", "text": "+91 81081 14949"},
+      {"entity_type": "EMAIL_ADDRESS", "text": "kshinternational.ipo@in.mpms.mufg.com"},
+      {"entity_type": "DATE_TIME", "text": "December 15, 2025"},
+      {"entity_type": "DATE_TIME", "text": "December 16, 2025"},
+      {"entity_type": "DATE_TIME", "text": "December 18, 2025"},
+      {"entity_type": "DATE_TIME", "text": "December 19, 2024"},
+      {"entity_type": "DATE_TIME", "text": "January 20, 2025"}
+    ]
+  }
+]
