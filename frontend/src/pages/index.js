@@ -303,13 +303,18 @@ export default function Home() {
   };
 
   const detectedList = redactionResult?.metadata?.detected_entities || [];
+  const entityCounts = redactionResult?.metadata?.entity_counts || {};
+  const pseudonymMappings = redactionResult?.metadata?.pseudonym_mappings || {};
+  const totalEntitiesFound = redactionResult?.metadata?.total_entities_found ?? detectedList.length;
+
   const filteredEntities = detectedList.filter((ent) => {
-    const matchesSearch =
-      ent.original_text.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      ent.pseudonym.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      ent.entity_type.toLowerCase().includes(searchTerm.toLowerCase());
+    const orig = (ent.original_text || '').toLowerCase();
+    const fake = (ent.pseudonym || '').toLowerCase();
+    const etype = (ent.entity_type || 'PII').toLowerCase();
+    const query = searchTerm.toLowerCase();
+    const matchesSearch = orig.includes(query) || fake.includes(query) || etype.includes(query);
     const matchesCategory =
-      selectedCategory === 'ALL' || ent.entity_type === selectedCategory;
+      selectedCategory === 'ALL' || (ent.entity_type || 'PII') === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
@@ -478,7 +483,7 @@ export default function Home() {
                         Redaction Complete
                       </h4>
                       <p className="text-xs text-slate-300">
-                        {redactionResult.metadata.total_entities_found} PII entities replaced with persistent pseudonyms in {redactionResult.processingTime} seconds.
+                        {totalEntitiesFound} PII entities replaced with persistent pseudonyms in {redactionResult.processingTime} seconds.
                       </p>
                     </div>
                   </div>
@@ -497,19 +502,19 @@ export default function Home() {
                   <div className="glass-panel rounded-xl p-5 border border-slate-800">
                     <p className="text-xs font-medium text-slate-400 mb-1">Total PII Entities</p>
                     <p className="text-2xl font-extrabold text-white">
-                      {redactionResult.metadata.total_entities_found}
+                      {totalEntitiesFound}
                     </p>
                   </div>
                   <div className="glass-panel rounded-xl p-5 border border-slate-800">
                     <p className="text-xs font-medium text-slate-400 mb-1">Unique Mappings</p>
                     <p className="text-2xl font-extrabold text-blue-400">
-                      {Object.keys(redactionResult.metadata.pseudonym_mappings).length}
+                      {Object.keys(pseudonymMappings).length}
                     </p>
                   </div>
                   <div className="glass-panel rounded-xl p-5 border border-slate-800">
                     <p className="text-xs font-medium text-slate-400 mb-1">Entity Categories</p>
                     <p className="text-2xl font-extrabold text-indigo-400">
-                      {Object.keys(redactionResult.metadata.entity_counts).length}
+                      {Object.keys(entityCounts).length}
                     </p>
                   </div>
                   <div className="glass-panel rounded-xl p-5 border border-slate-800">
@@ -526,7 +531,7 @@ export default function Home() {
                     PII Entity Breakdown
                   </h3>
                   <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-                    {Object.entries(redactionResult.metadata.entity_counts).map(
+                    {Object.entries(entityCounts).map(
                       ([etype, count]) => (
                         <div
                           key={etype}
@@ -582,7 +587,7 @@ export default function Home() {
                         className="bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500"
                       >
                         <option value="ALL">All Categories</option>
-                        {Object.keys(redactionResult.metadata.entity_counts).map((c) => (
+                        {Object.keys(entityCounts).map((c) => (
                           <option key={c} value={c}>
                             {c}
                           </option>

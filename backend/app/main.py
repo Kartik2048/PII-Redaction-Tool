@@ -18,7 +18,8 @@ from fastapi.responses import Response, JSONResponse
 # Ensure backend root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.redactor import redact_document, get_redactor
+from app.pii_redactor import PIIRedactor
+from app.redact_docx import redact_docx_document
 from app.evaluator import evaluate_redaction_engine
 
 app = FastAPI(
@@ -27,14 +28,25 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Pre-warm spaCy & Presidio model on FastAPI startup
+# Global singleton redactor
+_GLOBAL_REDACTOR = None
+
+
+def get_global_redactor(spacy_model: str = "en_core_web_sm"):
+    global _GLOBAL_REDACTOR
+    if _GLOBAL_REDACTOR is None:
+        _GLOBAL_REDACTOR = PIIRedactor(model_name=spacy_model)
+    return _GLOBAL_REDACTOR
+
+
 @app.on_event("startup")
 def warmup_models():
-    """Pre-load spaCy model and Presidio engine into memory on startup."""
+    """Pre-load spaCy model into memory on startup."""
     try:
-        get_redactor()
+        get_global_redactor()
     except Exception as e:
         print(f"Model pre-warm warning: {e}")
+
 
 # Enable CORS Middleware
 origins = ["*"]
@@ -95,8 +107,10 @@ async def redact_docx_endpoint(
         )
 
     try:
-        redacted_bytes, metadata = redact_document(
-            doc_input=content, spacy_model=spacy_model
+        # Create fresh session redactor for this document
+        redactor = PIIRedactor(model_name=spacy_model)
+        redacted_bytes, metadata = redact_docx_document(
+            doc_input=content, redactor=redactor, spacy_model=spacy_model
         )
     except Exception as e:
         raise HTTPException(

@@ -1,175 +1,198 @@
-"""
-Evaluation Engine (evaluator.py)
-
-Evaluates the PII Redaction Engine (backend/app/redactor.py) against a benchmark
-ground truth dataset (red_herring_ground_truth.json) and calculates Precision,
-Recall, and F1 Score (overall and per-entity breakdown).
-"""
-
 import json
 import os
-import sys
-from typing import Dict, Any, List, Tuple
+import re
+import unicodedata
+from collections import defaultdict
+from typing import Any, Dict, Iterable, List, Set
 
-# Ensure parent backend directory is in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from app.pii_redactor import PIIRedactor
 
-from app.redactor import PIIRedactor
+BENCHMARK_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "tests", "red_herring_ground_truth.json"
+)
 
-
-# Canonical mapping for entity type unification across Redactor & Ground Truth
-CANONICAL_ENTITY_MAP = {
-    "PERSON": "PERSON",
-    "FULL_NAMES": "PERSON",
-    "EMAIL": "EMAIL_ADDRESS",
-    "EMAIL_ADDRESS": "EMAIL_ADDRESS",
-    "PHONE": "PHONE_NUMBER",
-    "PHONE_NUMBER": "PHONE_NUMBER",
-    "ORGANIZATION": "ORGANIZATION",
-    "COMPANY_NAMES": "ORGANIZATION",
-    "LOCATION": "LOCATION",
-    "ADDRESSES": "LOCATION",
-    "SSN_GOVT_ID": "GOVT_ID",
-    "GOVT_ID": "GOVT_ID",
-    "DATE_OF_BIRTH": "DATE_TIME",
-    "DATE_TIME": "DATE_TIME",
+ENTITY_KEY_MAP = {
+    "full_name": "PERSON",
+    "company_name": "ORGANIZATION",
+    "email": "EMAIL_ADDRESS",
+    "phone": "PHONE_NUMBER",
+    "address": "LOCATION",
+    "dob": "DATE_TIME",
+    "date": "DATE_TIME",
+    "cin_pan": "GOVT_ID",
+    "reg_no": "GOVT_ID",
+    "ssn": "GOVT_ID",
+    "credit_card": "GOVT_ID",
+    "ip_address": "IP_ADDRESS",
 }
 
 
-def _clean_str(s: str) -> str:
-    """Normalize string by lowering and stripping whitespace/punctuation."""
-    return "".join(c.lower() for c in s if c.isalnum())
+def _normalize_text(value: str, entity_type: str = "") -> str:
+    """Normalize entity strings so equivalent representations compare cleanly."""
+    if value is None:
+        return ""
+
+    text = unicodedata.normalize("NFKC", str(value)).strip()
+    text = text.replace("\u2013", "-").replace("\u2014", "-")
+    # Strip trailing punctuation that detectors may include
+    text = text.rstrip(".,;:!?")
+    text = re.sub(r"\s+", " ", text)
+
+    if entity_type in {"PHONE_NUMBER", "GOVT_ID"}:
+        text = re.sub(r"[^A-Za-z0-9]", "", text).upper()
+    elif entity_type == "EMAIL_ADDRESS":
+        text = text.lower()
+    else:
+        text = text.lower()
+
+    return text.strip()
 
 
-def evaluate_redaction_engine(
-    ground_truth_path: str = "backend/tests/red_herring_ground_truth.json",
-    spacy_model: str = "en_core_web_sm",
-) -> Dict[str, Any]:
-    """
-    Evaluates the core PII redaction engine against ground truth annotations.
+def _iter_detected_entities(redactor: PIIRedactor, text: str) -> Dict[str, Set[str]]:
+    """Convert raw detector output into canonical entity-type buckets."""
+    raw = redactor.detect_pii(text)
+    canonical = defaultdict(set)
 
-    Returns:
-        Dict[str, Any]: Overall metrics (precision, recall, f1_score, tp, fp, fn)
-                        and per-entity metrics breakdown.
-    """
-    # Fallback path resolution if file is relative
-    if not os.path.exists(ground_truth_path):
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        alt_path = os.path.join(base_dir, "tests", "red_herring_ground_truth.json")
-        if os.path.exists(alt_path):
-            ground_truth_path = alt_path
+    for red_key, values in raw.items():
+        entity_type = ENTITY_KEY_MAP.get(red_key, red_key.upper())
+        for value in values:
+            canonical[entity_type].add(_normalize_text(value, entity_type))
 
-    with open(ground_truth_path, "r", encoding="utf-8") as f:
-        ground_truth_data = json.load(f)
+    return dict(canonical)
 
-    redactor = PIIRedactor(spacy_model=spacy_model)
 
-    entity_metrics: Dict[str, Dict[str, int]] = {}
+def _safe_divide(numerator: float, denominator: float) -> float:
+    if denominator == 0:
+        return 1.0 if numerator == 0 else 0.0
+    return numerator / denominator
 
-    for sample in ground_truth_data:
-        text = sample.get("text", "")
-        gt_items = sample.get("ground_truth_entities", [])
 
-        # Analyze sample text with PIIRedactor
-        presidio_results = redactor.analyze_text(text)
-        resolved_results = redactor._resolve_overlapping_entities(presidio_results)
+def evaluate_redaction_engine() -> Dict[str, Any]:
+    """Compare detector output against the benchmark ground truth and return precision/recall/F1 metrics."""
+    with open(BENCHMARK_PATH, "r", encoding="utf-8") as benchmark_file:
+        benchmark = json.load(benchmark_file)
 
-        # Extract detected entities
-        detected_entities: List[Tuple[str, str]] = []
-        for r in resolved_results:
-            raw_type = redactor.entity_type_map.get(r.entity_type, r.entity_type)
-            canonical_type = CANONICAL_ENTITY_MAP.get(raw_type, raw_type)
-            ent_text = text[r.start : r.end]
-            detected_entities.append((canonical_type, ent_text))
+    redactor = PIIRedactor()
 
-        # Ground truth entities
-        gt_entities: List[Tuple[str, str]] = [
-            (
-                CANONICAL_ENTITY_MAP.get(item["entity_type"], item["entity_type"]),
-                item["text"],
-            )
-            for item in gt_items
-        ]
+    total_gt = 0
+    total_tp = 0
+    total_fp = 0
+    total_fn = 0
+    by_entity_type: Dict[str, Dict[str, Any]] = {}
 
-        # Match detected vs ground truth per entity type
-        matched_gt_indices = set()
-        matched_det_indices = set()
+    # Track detailed entity lists for reporting
+    matched_entities: Dict[str, List[str]] = defaultdict(list)
+    missed_entities: Dict[str, List[str]] = defaultdict(list)
+    extra_entities: Dict[str, List[str]] = defaultdict(list)
 
-        for det_idx, (det_type, det_text) in enumerate(detected_entities):
-            det_clean = _clean_str(det_text)
-            for gt_idx, (gt_type, gt_text) in enumerate(gt_entities):
-                if gt_idx in matched_gt_indices:
-                    continue
-                if det_type == gt_type:
-                    gt_clean = _clean_str(gt_text)
-                    if (
-                        det_clean == gt_clean
-                        or det_clean in gt_clean
-                        or gt_clean in det_clean
-                    ):
-                        matched_gt_indices.add(gt_idx)
-                        matched_det_indices.add(det_idx)
-                        break
+    for entry in benchmark:
+        section_text = entry.get("text", "")
+        gt_entities = entry.get("ground_truth_entities", [])
 
-        # Calculate TP, FP, FN for this sample
-        for gt_idx, (gt_type, _) in enumerate(gt_entities):
-            if gt_type not in entity_metrics:
-                entity_metrics[gt_type] = {"tp": 0, "fp": 0, "fn": 0}
+        detected = _iter_detected_entities(redactor, section_text)
+        matched_gt_values = defaultdict(set)
 
-            if gt_idx in matched_gt_indices:
-                entity_metrics[gt_type]["tp"] += 1
+        for gt in gt_entities:
+            entity_type = gt.get("entity_type", "UNKNOWN")
+            gt_value = _normalize_text(gt.get("text", ""), entity_type)
+            if not gt_value:
+                continue
+
+            total_gt += 1
+            if entity_type not in by_entity_type:
+                by_entity_type[entity_type] = {
+                    "true_positives": 0,
+                    "false_positives": 0,
+                    "false_negatives": 0,
+                    "ground_truth_count": 0,
+                    "detected_count": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1_score": 0.0,
+                }
+
+            by_entity_type[entity_type]["ground_truth_count"] += 1
+
+            d_values = detected.get(entity_type, set())
+            if gt_value in d_values:
+                total_tp += 1
+                by_entity_type[entity_type]["true_positives"] += 1
+                matched_gt_values[entity_type].add(gt_value)
+                matched_entities[entity_type].append(gt.get("text", ""))
             else:
-                entity_metrics[gt_type]["fn"] += 1
+                total_fn += 1
+                by_entity_type[entity_type]["false_negatives"] += 1
+                missed_entities[entity_type].append(gt.get("text", ""))
 
-        for det_idx, (det_type, _) in enumerate(detected_entities):
-            if det_type not in entity_metrics:
-                entity_metrics[det_type] = {"tp": 0, "fp": 0, "fn": 0}
+        for entity_type, values in detected.items():
+            if entity_type not in by_entity_type:
+                by_entity_type[entity_type] = {
+                    "true_positives": 0,
+                    "false_positives": 0,
+                    "false_negatives": 0,
+                    "ground_truth_count": 0,
+                    "detected_count": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1_score": 0.0,
+                }
 
-            if det_idx not in matched_det_indices:
-                entity_metrics[det_type]["fp"] += 1
+            by_entity_type[entity_type]["detected_count"] += len(values)
 
-    # Aggregate Overall and Per-Entity Metrics
-    total_tp = sum(m["tp"] for m in entity_metrics.values())
-    total_fp = sum(m["fp"] for m in entity_metrics.values())
-    total_fn = sum(m["fn"] for m in entity_metrics.values())
+            for value in values:
+                if value in matched_gt_values.get(entity_type, set()):
+                    continue
+                if entity_type == "GOVT_ID" and value == "":
+                    continue
+                total_fp += 1
+                by_entity_type[entity_type]["false_positives"] += 1
+                extra_entities[entity_type].append(value)
 
-    def calc_stats(tp: int, fp: int, fn: int) -> Tuple[float, float, float]:
-        precision = tp / (tp + fp) if (tp + fp) > 0 else (1.0 if fn == 0 else 0.0)
-        recall = tp / (tp + fn) if (tp + fn) > 0 else (1.0 if fp == 0 else 0.0)
-        f1 = (
-            (2 * precision * recall) / (precision + recall)
-            if (precision + recall) > 0
-            else 0.0
-        )
-        return round(precision, 4), round(recall, 4), round(f1, 4)
+    for entity_type, metrics in by_entity_type.items():
+        tp = float(metrics["true_positives"])
+        fp = float(metrics["false_positives"])
+        fn = float(metrics["false_negatives"])
 
-    overall_p, overall_r, overall_f1 = calc_stats(total_tp, total_fp, total_fn)
+        precision = _safe_divide(tp, tp + fp)
+        recall = _safe_divide(tp, tp + fn)
+        f1 = _safe_divide(2 * precision * recall, precision + recall)
 
-    by_entity_type = {}
-    for etype, m in entity_metrics.items():
-        p, r, f1 = calc_stats(m["tp"], m["fp"], m["fn"])
-        by_entity_type[etype] = {
-            "precision": p,
-            "recall": r,
-            "f1_score": f1,
-            "tp": m["tp"],
-            "fp": m["fp"],
-            "fn": m["fn"],
-        }
+        metrics["precision"] = precision
+        metrics["recall"] = recall
+        metrics["f1_score"] = f1
+
+    overall_precision = _safe_divide(float(total_tp), float(total_tp + total_fp))
+    overall_recall = _safe_divide(float(total_tp), float(total_tp + total_fn))
+    overall_f1 = _safe_divide(2 * overall_precision * overall_recall, overall_precision + overall_recall)
+
+    total_detected = total_tp + total_fp
 
     return {
         "overall": {
-            "precision": overall_p,
-            "recall": overall_r,
+            "precision": overall_precision,
+            "recall": overall_recall,
             "f1_score": overall_f1,
-            "tp": total_tp,
-            "fp": total_fp,
-            "fn": total_fn,
+            "true_positives": total_tp,
+            "false_positives": total_fp,
+            "false_negatives": total_fn,
+            "total_ground_truth_entities": total_gt,
+            "total_detected_entities": total_detected,
         },
         "by_entity_type": by_entity_type,
+        "entity_counts": {
+            entity_type: {
+                "ground_truth": metrics.get("ground_truth_count", 0),
+                "detected": metrics.get("detected_count", 0),
+                "matched": metrics["true_positives"],
+                "missed": metrics["false_negatives"],
+                "extra": metrics["false_positives"],
+            }
+            for entity_type, metrics in by_entity_type.items()
+        },
+        "details": {
+            "matched": dict(matched_entities),
+            "missed": dict(missed_entities),
+            "extra": dict(extra_entities),
+        },
+        "ground_truth_size": total_gt,
     }
-
-
-if __name__ == "__main__":
-    report = evaluate_redaction_engine()
-    print(json.dumps(report, indent=2))
