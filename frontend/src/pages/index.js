@@ -24,7 +24,7 @@ import {
 
 export default function Home() {
   const [apiUrl, setApiUrl] = useState(
-    process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:7860'
+    process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
   );
   const [activeTab, setActiveTab] = useState('redact'); // 'redact' | 'evaluate'
   const [backendStatus, setBackendStatus] = useState('connecting'); // 'connecting' | 'ready' | 'offline'

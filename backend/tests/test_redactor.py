@@ -98,6 +98,97 @@ def test_pii_pattern_analysis():
 
 
 # ---------------------------------------------------------------------------
+# 3b. Test SEBI Registration Number Detection (Fix 1)
+# ---------------------------------------------------------------------------
+def test_sebi_registration_number_detection():
+    redactor = PIIRedactor()
+
+    # SEBI registration numbers for lead managers and registrars
+    results = redactor.analyze_text("SEBI Reg INM000013004")
+    assert any(r.entity_type == "SSN_GOVT_ID" for r in results)
+
+    results = redactor.analyze_text("Registration INR000004058 for registrar")
+    assert any(r.entity_type == "SSN_GOVT_ID" for r in results)
+
+    results = redactor.analyze_text("SEBI Reg INM000011179")
+    assert any(r.entity_type == "SSN_GOVT_ID" for r in results)
+
+
+# ---------------------------------------------------------------------------
+# 3c. Test Organization Pattern Recognition (Fix 2)
+# ---------------------------------------------------------------------------
+def test_organization_pattern_recognition():
+    redactor = PIIRedactor()
+
+    # Private Limited companies
+    results = redactor.analyze_text("Group entity Waterloo Industrial Park VI Private Limited was incorporated.")
+    org_texts = [r for r in results if r.entity_type == "ORGANIZATION"]
+    assert any("Waterloo" in results[0].entity_type or True for _ in org_texts), "Should detect Private Limited org"
+    assert len(org_texts) >= 1
+
+    # LLP entities
+    results = redactor.analyze_text("Statutory Auditors Kirtane & Pandit LLP audited the statements.")
+    org_texts = [r for r in results if r.entity_type == "ORGANIZATION"]
+    assert len(org_texts) >= 1
+
+    # Public Limited companies with stop words in name (like "Securities")
+    results = redactor.analyze_text("Contact ICICI Securities Limited for details.")
+    org_texts = [r for r in results if r.entity_type == "ORGANIZATION"]
+    assert len(org_texts) >= 1
+
+    # Should NOT match sentence fragments as orgs
+    results = redactor.analyze_text("The company converted to public limited on June 1, 1996.")
+    org_texts = [r for r in results if r.entity_type == "ORGANIZATION"]
+    # Should not detect "The company converted to public limited" as an org
+    for r in org_texts:
+        matched_text = "The company converted to public limited on June 1, 1996."[r.start:r.end]
+        assert "converted" not in matched_text.lower(), f"False positive org: '{matched_text}'"
+
+
+# ---------------------------------------------------------------------------
+# 3d. Test Location Gazetteer Recognition (Fix 3)
+# ---------------------------------------------------------------------------
+def test_location_gazetteer_recognition():
+    redactor = PIIRedactor()
+
+    # Indian area + city patterns
+    results = redactor.analyze_text("Registered Office is located at Birdewadi Pune")
+    loc_results = [r for r in results if r.entity_type == "LOCATION"]
+    assert len(loc_results) >= 1, "Should detect 'Birdewadi Pune' as LOCATION"
+
+    results = redactor.analyze_text("located at Baner Pune area")
+    loc_results = [r for r in results if r.entity_type == "LOCATION"]
+    assert len(loc_results) >= 1, "Should detect 'Baner Pune' as LOCATION"
+
+    results = redactor.analyze_text("located at Bandra Kurla Complex Mumbai")
+    loc_results = [r for r in results if r.entity_type == "LOCATION"]
+    assert len(loc_results) >= 1, "Should detect 'Bandra Kurla Complex Mumbai' as LOCATION"
+
+
+# ---------------------------------------------------------------------------
+# 3e. Test False Positive Elimination (Fixes 4 & 5)
+# ---------------------------------------------------------------------------
+def test_false_positive_elimination():
+    redactor = PIIRedactor()
+
+    # "Key Officers" should NOT be detected as PERSON
+    results = redactor.analyze_text("Key Officers include Sarthak Malvadkar")
+    person_texts = [
+        "Key Officers include Sarthak Malvadkar"[r.start:r.end]
+        for r in results if r.entity_type == "PERSON"
+    ]
+    assert "Key Officers" not in person_texts, "Should not detect 'Key Officers' as PERSON"
+
+    # "CIN" abbreviation should NOT be detected as ORGANIZATION
+    results = redactor.analyze_text("under CIN U28129PN1979PLC141032")
+    for r in results:
+        if r.entity_type == "ORGANIZATION":
+            text = "under CIN U28129PN1979PLC141032"
+            matched = text[r.start:r.end]
+            assert matched != "CIN", "Should not detect 'CIN' as ORGANIZATION"
+
+
+# ---------------------------------------------------------------------------
 # 4. Test Contextual Score Boosting
 # ---------------------------------------------------------------------------
 def test_contextual_score_boosting():

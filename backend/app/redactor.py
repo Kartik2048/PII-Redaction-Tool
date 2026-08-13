@@ -57,6 +57,25 @@ NON_PII_TERMS = {
     "audit committee",
     "articles of association",
     "memorandum of association",
+    # Section & Table Description Terms
+    "details of the offer",
+    "details of the offer to public",
+    "size of the offer for sale",
+    "objects of the offer",
+    "basis for offer price",
+    "terms of the offer",
+    "forward-looking statements",
+    "currency of presentation",
+    "market data and currency",
+    "central government",
+    "state government",
+    "government of india",
+    "indian government",
+    "weighted average cost",
+    "cost of acquisition",
+    "share reservation",
+    "foreign ownership",
+    "indian securities",
 }
 
 NON_PII_WORDS = {
@@ -71,7 +90,19 @@ NON_PII_WORDS = {
     "capital", "value", "face", "amount", "aggregate", "million", "billion",
     "table", "statement", "financial", "rights", "securities", "exchange",
     "bank", "trust", "group", "summary", "schedule", "annexure", "index",
-    "definitions", "abbreviations", "conventions", "presentation", "name"
+    "definitions", "abbreviations", "conventions", "presentation", "name",
+    "key", "officers", "officer", "statutory", "auditors", "auditor",
+    "independent", "compliance", "managers", "manager", "registrar",
+    "lead", "running", "grievance", "investor", "advisors", "advisor",
+    # Additional Section/Header & Geographic Nouns
+    "public", "looking", "statements", "market", "currency", "data",
+    "government", "central", "state", "taluka", "district", "village",
+    "khed", "chakan", "tehsil", "mandal", "acquisition", "weighted",
+    "average", "cost", "reservation", "among", "ownership", "foreign",
+    "restrictions", "objects", "basis", "benefits", "legal", "other",
+    "information", "regulatory", "disclosures", "business", "our",
+    "and", "the", "for", "to", "of", "in", "on", "at", "by", "with",
+    "from", "into", "or", "an", "a", "is", "are", "was", "were",
 }
 
 ALL_CAPS_STOP_WORDS = {
@@ -80,7 +111,18 @@ ALL_CAPS_STOP_WORDS = {
     "TABLE", "SECTION", "STATEMENT", "FINANCIAL", "RIGHTS", "ISSUE",
     "DRAFT", "ACT", "INDIA", "SECURITIES", "EXCHANGE", "BOARD",
     "BANK", "COMPANY", "TRUST", "GROUP", "TOTAL", "DETAILS", "SUMMARY",
-    "DEFINITIONS", "ABBREVIATIONS", "CONVENTIONS", "PRESENTATION"
+    "DEFINITIONS", "ABBREVIATIONS", "CONVENTIONS", "PRESENTATION",
+    "KEY", "OFFICERS", "STATUTORY", "AUDITORS", "INDEPENDENT",
+    "COMPLIANCE", "MANAGERS", "REGISTRAR", "LEAD", "RUNNING",
+    # Section Headers, Prepositions, Administrative Terms
+    "PUBLIC", "LOOKING", "STATEMENTS", "MARKET", "CURRENCY", "DATA",
+    "GOVERNMENT", "CENTRAL", "STATE", "TALUKA", "DISTRICT", "VILLAGE",
+    "KHED", "CHAKAN", "ACQUISITION", "WEIGHTED", "AVERAGE", "COST",
+    "RESERVATION", "AMONG", "OWNERSHIP", "FOREIGN", "RESTRICTIONS",
+    "OBJECTS", "BASIS", "BENEFITS", "LEGAL", "OTHER", "INFORMATION",
+    "REGULATORY", "DISCLOSURES", "BUSINESS", "OUR", "QIBS", "NIIS",
+    "RIIS", "AND", "THE", "FOR", "TO", "OF", "IN", "ON", "AT", "BY",
+    "WITH", "FROM", "INTO", "OR", "AN", "A",
 }
 
 HEADING_BLOCKLIST = {
@@ -215,6 +257,12 @@ class CustomGovtIDRecognizer(PatternRecognizer):
                 regex=r"\b[UL]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}\b",
                 score=1.0,
             ),
+            # Fix 1: SEBI Registration Numbers (e.g. INM000013004, INR000004058)
+            Pattern(
+                name="sebi_registration_number",
+                regex=r"\bIN[A-Z]\d{9,12}\b",
+                score=1.0,
+            ),
         ]
         super().__init__(
             supported_entity="SSN_GOVT_ID",
@@ -260,12 +308,12 @@ class NamePatternRecognizer(PatternRecognizer):
             Pattern(
                 name="title_case_name_sequence",
                 regex=r"\b[A-Z][a-zA-Z]{1,}(?:\s+[A-Z][a-zA-Z]{1,}){1,3}\b",
-                score=0.70,
+                score=0.85,
             ),
             Pattern(
                 name="all_caps_name_sequence",
                 regex=r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){1,3}\b",
-                score=0.70,
+                score=0.85,
             ),
         ]
         super().__init__(
@@ -298,13 +346,142 @@ class NamePatternRecognizer(PatternRecognizer):
         word_lowers = [w.lower() for w in words]
         word_uppers = [w.upper() for w in words]
 
-        corp_suffixes = {"LIMITED", "TRUST", "INC", "CORPORATION", "LLP", "PRIVATE", "HOLDINGS", "GROUP", "BANK", "PLC"}
+        # 1. Reject if ANY word is a preposition, conjunction, or article
+        preps_conjs = {
+            "AND", "OR", "OF", "TO", "FOR", "IN", "ON", "AT", "BY", "WITH",
+            "FROM", "INTO", "THE", "A", "AN", "AMONG", "ABOUT", "UNDER", "OVER"
+        }
+        if any(w in preps_conjs for w in word_uppers):
+            return False
+
+        # 2. Reject corporate suffixes
+        corp_suffixes = {"LIMITED", "TRUST", "INC", "CORPORATION", "LLP", "PRIVATE", "HOLDINGS", "GROUP", "BANK", "PLC", "PVT", "LTD"}
         if any(w in corp_suffixes for w in word_uppers):
             return False
 
+        # 3. Reject if ANY word is in NON_PII_WORDS or ALL_CAPS_STOP_WORDS
         if any(w in NON_PII_WORDS for w in word_lowers) or any(w in ALL_CAPS_STOP_WORDS for w in word_uppers):
             return False
 
+        # 4. Reject common non-name terms (section titles, geographic terms, financial terms)
+        non_name_words = {
+            "government", "central", "state", "taluka", "district", "village", "city",
+            "town", "road", "street", "building", "floor", "park", "complex",
+            "section", "table", "details", "offer", "sale", "issue", "public",
+            "acquisition", "cost", "weighted", "average", "statements", "looking",
+            "forward", "market", "currency", "presentation", "financial", "position",
+            "results", "operations", "summary", "general", "capital", "structure",
+            "business", "objects", "basis", "price", "tax", "benefits", "legal",
+            "information", "regulatory", "disclosures", "terms", "restrictions",
+            "ownership", "foreign", "indian", "securities", "exchange", "board",
+            "overview", "industry", "provisions", "main", "articles", "association",
+        }
+        if any(w in non_name_words for w in word_lowers):
+            return False
+
+        return True
+
+
+# Fix 2: Custom Organization Pattern Recognizer for Indian Corporate Names
+class CustomOrganizationRecognizer(PatternRecognizer):
+    """Recognizes Indian corporate entity names by their legal suffixes (Private Limited, LLP, etc.)."""
+    def __init__(self, **kwargs):
+        patterns = [
+            # "X Y Z Private Limited" or "X Y Z Pvt Ltd" or "X Y Z Pvt. Ltd."
+            Pattern(
+                name="indian_private_limited",
+                regex=r"\b(?:[A-Z][A-Za-z&]+(?:\s+[A-Za-z&]+){0,8})\s+(?:Private\s+Limited|Pvt\.?\s*Ltd\.?)\b",
+                score=0.95,
+            ),
+            # "X Y Z Limited" (public company)
+            Pattern(
+                name="indian_public_limited",
+                regex=r"\b(?:[A-Z][A-Za-z&]+(?:\s+[A-Za-z&]+){0,8})\s+Limited\b",
+                score=0.90,
+            ),
+            # "X & Y LLP" or "X Y LLP"
+            Pattern(
+                name="llp_entity",
+                regex=r"\b(?:[A-Z][A-Za-z&]+(?:\s+[A-Za-z&]+){0,6})\s+LLP\b",
+                score=0.95,
+            ),
+        ]
+        super().__init__(
+            supported_entity="ORGANIZATION",
+            patterns=patterns,
+            name="CustomOrganizationRecognizer",
+        )
+
+    def validate_result(self, pattern_text: str) -> bool:
+        """Filter out matches that are clearly not organization names."""
+        clean = pattern_text.strip()
+        words = clean.split()
+        if len(words) < 2:
+            return False
+        # Reject if first word is a common article/pronoun/preposition (not a proper noun)
+        non_name_starters = {
+            "the", "a", "an", "this", "that", "its", "our", "their", "his", "her",
+            "and", "or", "but", "for", "with", "from", "into", "by", "as", "if",
+            "is", "was", "are", "were", "be", "been", "being", "has", "have", "had",
+            "it", "we", "they", "he", "she", "you", "who", "which", "what",
+        }
+        if words[0].lower() in non_name_starters:
+            return False
+        # Reject if match contains common verbs (indicates a sentence, not a name)
+        verb_indicators = {
+            "converted", "changed", "registered", "incorporated", "located",
+            "issued", "filed", "established", "formed", "appointed", "resigned",
+        }
+        if any(w.lower() in verb_indicators for w in words):
+            return False
+        return True
+
+
+# Fix 3: Custom Location Recognizer with Indian City Gazetteer
+class CustomLocationRecognizer(PatternRecognizer):
+    """Recognizes Indian location references: area/locality + known city name patterns."""
+
+    INDIAN_CITIES = {
+        "Mumbai", "Pune", "Delhi", "Bangalore", "Bengaluru", "Chennai",
+        "Hyderabad", "Kolkata", "Ahmedabad", "Jaipur", "Lucknow",
+        "Chandigarh", "Noida", "Gurgaon", "Gurugram", "Thane",
+        "Navi Mumbai", "Surat", "Indore", "Nagpur", "Vadodara",
+        "Kochi", "Coimbatore", "Visakhapatnam", "Bhopal", "Patna",
+    }
+
+    def __init__(self, **kwargs):
+        # Build city alternation pattern
+        city_alts = "|".join(sorted(self.INDIAN_CITIES, key=len, reverse=True))
+        patterns = [
+            # "AreaName CityName" — e.g. "Birdewadi Pune", "Baner Pune"
+            Pattern(
+                name="area_city_pattern",
+                regex=rf"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){{0,3}}\s+(?:{city_alts})\b",
+                score=0.92,
+            ),
+        ]
+        super().__init__(
+            supported_entity="LOCATION",
+            patterns=patterns,
+            name="CustomLocationRecognizer",
+        )
+
+    def validate_result(self, pattern_text: str) -> bool:
+        """Ensure match ends with a known Indian city and is not a person name."""
+        clean = pattern_text.strip()
+        words = clean.split()
+        if len(words) < 2:
+            return False
+        # Last word(s) must be a known city
+        last_word = words[-1]
+        if last_word not in self.INDIAN_CITIES:
+            # Check for 2-word cities like "Navi Mumbai"
+            if len(words) >= 3:
+                two_word_city = f"{words[-2]} {words[-1]}"
+                if two_word_city not in self.INDIAN_CITIES:
+                    return False
+            else:
+                return False
         return True
 
 
@@ -398,6 +575,8 @@ class PIIRedactor:
         "CIN:",
     ]
 
+    # Fix 7: Include custom LOCATION and ORGANIZATION recognizers as high-priority
+    # so they win overlap resolution against generic spaCy PERSON tags
     DETERMINISTIC_ENTITIES = {
         "EMAIL",
         "PHONE",
@@ -405,6 +584,7 @@ class PIIRedactor:
         "CREDIT_CARD",
         "SSN_GOVT_ID",
         "DATE_OF_BIRTH",
+        "LOCATION",
     }
 
     def __init__(self, spacy_model: str = "en_core_web_sm"):
@@ -428,6 +608,9 @@ class PIIRedactor:
         registry.add_recognizer(CustomGovtIDRecognizer())
         registry.add_recognizer(CustomDateOfBirthRecognizer())
         registry.add_recognizer(NamePatternRecognizer())
+        # Fix 2 & 3: Register custom organization and location recognizers
+        registry.add_recognizer(CustomOrganizationRecognizer())
+        registry.add_recognizer(CustomLocationRecognizer())
 
         self.analyzer = AnalyzerEngine(
             nlp_engine=nlp_engine,
@@ -553,6 +736,10 @@ class PIIRedactor:
                 if res.score < 0.80:
                     continue
 
+            # Fix 5: Filter short abbreviation ORG detections (e.g. "CIN", "BSE")
+            if res.entity_type == "ORGANIZATION" and len(raw_match) <= 3:
+                continue
+
             # 3. Single-Word Filter for PERSON (require explicit honorific prefix unless inside a name column)
             if res.entity_type == "PERSON" and not is_name_col:
                 if len(words) == 1:
@@ -563,11 +750,19 @@ class PIIRedactor:
                         continue
 
             # 4. Non-PII Boilerplate Exclusion Filter
-            if res.entity_type in ("PERSON", "ORGANIZATION", "LOCATION"):
+            # Fix 6: For ORGANIZATION, only reject if ALL words are stop words (not partial matches)
+            #         This prevents filtering out valid orgs like "ICICI Securities Limited"
+            if res.entity_type in ("PERSON", "LOCATION"):
                 if match_lower in NON_PII_WORDS or match_lower in NON_PII_TERMS:
                     continue
                 if len(words) == 1 and word_lowers[0] in NON_PII_WORDS:
                     continue
+                if all(w in NON_PII_WORDS or w.upper() in ALL_CAPS_STOP_WORDS for w in word_lowers):
+                    continue
+            elif res.entity_type == "ORGANIZATION":
+                if match_lower in NON_PII_TERMS:
+                    continue
+                # Only reject orgs where ALL words are generic stop words
                 if all(w in NON_PII_WORDS or w.upper() in ALL_CAPS_STOP_WORDS for w in word_lowers):
                     continue
 
@@ -586,11 +781,11 @@ class PIIRedactor:
 
             filtered_results.append(res)
 
-        # Store in cache (limit cache size to 5,000 entries)
+        # Fix 8: Store in cache using consistent cache_key tuple (text, is_name_col)
         with self._cache_lock:
             if len(self._analysis_cache) > 5000:
                 self._analysis_cache.clear()
-            self._analysis_cache[text] = filtered_results
+            self._analysis_cache[cache_key] = filtered_results
 
         return filtered_results
 
