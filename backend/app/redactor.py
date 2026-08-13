@@ -71,7 +71,7 @@ NON_PII_WORDS = {
     "capital", "value", "face", "amount", "aggregate", "million", "billion",
     "table", "statement", "financial", "rights", "securities", "exchange",
     "bank", "trust", "group", "summary", "schedule", "annexure", "index",
-    "definitions", "abbreviations", "conventions", "presentation"
+    "definitions", "abbreviations", "conventions", "presentation", "name"
 }
 
 ALL_CAPS_STOP_WORDS = {
@@ -81,6 +81,14 @@ ALL_CAPS_STOP_WORDS = {
     "DRAFT", "ACT", "INDIA", "SECURITIES", "EXCHANGE", "BOARD",
     "BANK", "COMPANY", "TRUST", "GROUP", "TOTAL", "DETAILS", "SUMMARY",
     "DEFINITIONS", "ABBREVIATIONS", "CONVENTIONS", "PRESENTATION"
+}
+
+HEADING_BLOCKLIST = {
+    "general information", "capital structure", "definitions", "abbreviations",
+    "currency", "presentation", "risk factors", "summary", "introduction",
+    "the offer", "summary financial statements", "general risks", "listing",
+    "book running lead managers", "registrar to the offer", "bid/offer period",
+    "details of the offer", "type", "size of the fresh issue", "total offer size"
 }
 def is_valid_luhn(card_number_str: str) -> bool:
     """Validate numeric string against the Luhn algorithm checksum."""
@@ -219,13 +227,23 @@ class CustomDateOfBirthRecognizer(PatternRecognizer):
     def __init__(self, **kwargs):
         patterns = [
             Pattern(
-                name="dob_numeric",
+                name="full_month_date",
+                regex=r"(?i)\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b",
+                score=0.85,
+            ),
+            Pattern(
+                name="short_month_date",
+                regex=r"(?i)\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b",
+                score=0.85,
+            ),
+            Pattern(
+                name="numeric_date",
                 regex=r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
                 score=0.85,
             ),
             Pattern(
-                name="dob_textual",
-                regex=r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b",
+                name="iso_date",
+                regex=r"\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b",
                 score=0.85,
             ),
         ]
@@ -233,8 +251,61 @@ class CustomDateOfBirthRecognizer(PatternRecognizer):
             supported_entity="DATE_OF_BIRTH",
             patterns=patterns,
             name="CustomDateOfBirthRecognizer",
-            context=["born", "birth", "dob", "date of birth", "age", "born on"]
         )
+
+
+class NamePatternRecognizer(PatternRecognizer):
+    def __init__(self, **kwargs):
+        patterns = [
+            Pattern(
+                name="title_case_name_sequence",
+                regex=r"\b[A-Z][a-zA-Z]{1,}(?:\s+[A-Z][a-zA-Z]{1,}){1,3}\b",
+                score=0.70,
+            ),
+            Pattern(
+                name="all_caps_name_sequence",
+                regex=r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){1,3}\b",
+                score=0.70,
+            ),
+        ]
+        super().__init__(
+            supported_entity="PERSON",
+            patterns=patterns,
+            name="NamePatternRecognizer",
+            context=[
+                "OUR PROMOTERS:",
+                "PROMOTERS:",
+                "PROMOTER:",
+                "CONTACT PERSON:",
+                "NAME OF THE",
+                "SHAREHOLDER:",
+                "SHAREHOLDERS:",
+                "DIRECTOR:",
+                "DIRECTORS:",
+                "SECRETARY:",
+                "COMPLIANCE OFFICER",
+            ],
+        )
+
+    def validate_result(self, pattern_text: str) -> bool:
+        words = [w.strip() for w in pattern_text.split() if w.strip()]
+        if not (2 <= len(words) <= 4):
+            return False
+
+        if not all(w[0].isupper() for w in words):
+            return False
+
+        word_lowers = [w.lower() for w in words]
+        word_uppers = [w.upper() for w in words]
+
+        corp_suffixes = {"LIMITED", "TRUST", "INC", "CORPORATION", "LLP", "PRIVATE", "HOLDINGS", "GROUP", "BANK", "PLC"}
+        if any(w in corp_suffixes for w in word_uppers):
+            return False
+
+        if any(w in NON_PII_WORDS for w in word_lowers) or any(w in ALL_CAPS_STOP_WORDS for w in word_uppers):
+            return False
+
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +427,7 @@ class PIIRedactor:
         registry.add_recognizer(CustomCreditCardRecognizer())
         registry.add_recognizer(CustomGovtIDRecognizer())
         registry.add_recognizer(CustomDateOfBirthRecognizer())
+        registry.add_recognizer(NamePatternRecognizer())
 
         self.analyzer = AnalyzerEngine(
             nlp_engine=nlp_engine,
@@ -406,7 +478,7 @@ class PIIRedactor:
         )
 
         # 1. Contextual ALL-CAPS & Title-Cased Promoters List Extractor
-        promoter_match = re.search(r'(?i)\b(?:OUR\s+)?PROMOTERS?\s*:\s*', text)
+        promoter_match = re.search(r'\b(?:OUR\s+)?PROMOTERS\s*:\s*', text, re.IGNORECASE)
         if promoter_match:
             start_pos = promoter_match.end()
             promoter_section = text[start_pos:]
@@ -440,22 +512,18 @@ class PIIRedactor:
                                     )
                                 )
 
-        # 2. Table Cell Name Recognition (if is_name_col is True)
-        if is_name_col:
-            cell_words = [w.strip() for w in re.split(r'\s+', clean_t) if w.strip()]
-            if 2 <= len(cell_words) <= 3:
-                if all(w[0].isupper() for w in cell_words if w):
-                    if not any(w.lower() in NON_PII_WORDS or w.upper() in ALL_CAPS_STOP_WORDS for w in cell_words):
-                        start_idx = text.find(clean_t)
-                        if start_idx != -1:
-                            results.append(
-                                RecognizerResult(
-                                    entity_type="PERSON",
-                                    start=start_idx,
-                                    end=start_idx + len(clean_t),
-                                    score=0.95,
-                                )
-                            )
+        # 2. Table Cell Name Recognition (if is_name_col is True, redact cell text whatsoever)
+        if is_name_col and clean_t:
+            start_idx = text.find(clean_t)
+            if start_idx != -1:
+                results.append(
+                    RecognizerResult(
+                        entity_type="PERSON",
+                        start=start_idx,
+                        end=start_idx + len(clean_t),
+                        score=1.0,
+                    )
+                )
 
         # Contextual Score Boosting for Legal/Corporate Triggers
         boosted_results: List[RecognizerResult] = []
@@ -468,7 +536,7 @@ class PIIRedactor:
                 res.score = score
             boosted_results.append(res)
 
-        # Filter out NON_PII_WORDS, NON_PII_TERMS, monetary amounts, section headers, and statutory citation years
+        # Filter out HEADING_BLOCKLIST, NON_PII_WORDS, NON_PII_TERMS, monetary amounts, section headers, and apply Single-Word Filter
         filtered_results: List[RecognizerResult] = []
         for res in boosted_results:
             raw_match = text[res.start:res.end].strip()
@@ -476,15 +544,25 @@ class PIIRedactor:
             words = [w.strip() for w in re.split(r'\s+', raw_match) if w.strip()]
             word_lowers = [w.lower() for w in words]
 
-            # 1. Strict Confidence Thresholds
+            # 1. Heading Blocklist Check
+            if match_lower in HEADING_BLOCKLIST or any(heading == match_lower or match_lower in heading for heading in HEADING_BLOCKLIST):
+                continue
+
+            # 2. Strict Confidence Thresholds
             if res.entity_type in ("PERSON", "ORGANIZATION", "LOCATION"):
                 if res.score < 0.80:
                     continue
-                # Higher confidence required for single-word entities
-                if len(words) == 1 and res.entity_type in ("PERSON", "ORGANIZATION") and res.score < 0.85:
-                    continue
 
-            # 2. Non-PII Boilerplate Exclusion Filter
+            # 3. Single-Word Filter for PERSON (require explicit honorific prefix unless inside a name column)
+            if res.entity_type == "PERSON" and not is_name_col:
+                if len(words) == 1:
+                    prefix_ctx = text[max(0, res.start - 20):res.start].strip().lower()
+                    honorifics = ["mr.", "mr", "ms.", "ms", "mrs.", "mrs", "dr.", "dr", "smt.", "smt", "shri", "prof.", "prof"]
+                    has_honorific = any(prefix_ctx.endswith(h) or (prefix_ctx.split() and prefix_ctx.split()[-1] == h) for h in honorifics)
+                    if not has_honorific:
+                        continue
+
+            # 4. Non-PII Boilerplate Exclusion Filter
             if res.entity_type in ("PERSON", "ORGANIZATION", "LOCATION"):
                 if match_lower in NON_PII_WORDS or match_lower in NON_PII_TERMS:
                     continue
@@ -493,23 +571,7 @@ class PIIRedactor:
                 if all(w in NON_PII_WORDS or w.upper() in ALL_CAPS_STOP_WORDS for w in word_lowers):
                     continue
 
-            # 3. Person Entity Validation (POS & Context check)
-            if res.entity_type == "PERSON":
-                prefix_ctx = text[max(0, res.start - 30):res.start].lower()
-                has_person_trigger = any(t in prefix_ctx for t in ["mr.", "ms.", "mrs.", "dr.", "promoter:", "promoter", "director:", "officer", "secretary", "chairman", "signatory", "manager", "kmp"])
-
-                if any(w in NON_PII_WORDS for w in word_lowers) and not has_person_trigger:
-                    continue
-
-                if len(words) == 1 and not has_person_trigger:
-                    if self.nlp:
-                        sub_doc = self.nlp(raw_match)
-                        if not any(token.pos_ == "PROPN" for token in sub_doc):
-                            continue
-                    else:
-                        continue
-
-            # 4. Contextual Exclusions (monetary, page numbers, statutory citations)
+            # 5. Contextual Exclusions (monetary, page numbers, statutory citations)
             prefix_ctx = text[max(0, res.start - 25):res.start].lower()
             suffix_ctx = text[res.end:min(len(text), res.end + 25)].lower()
 
@@ -677,14 +739,26 @@ class PIIRedactor:
         if visited_cells is None:
             visited_cells = set()
 
-        # Identify column indices where header contains "NAME" or "PROMOTER"
+        HEADER_NAME_KEYWORDS = [
+            "NAME", "PROMOTER", "PROMOTOR", "CONTACT", "DIRECTOR", "OFFICER",
+            "SHAREHOLDER", "EXECUTIVE", "MANAGEMENT", "KMP", "SIGNATORY", "AUDITOR"
+        ]
+
+        # Identify column indices where any top 3 row header cell contains a name/contact keyword
         name_col_indices = set()
+        header_row_count = 1
+
         if table.rows:
-            header_row = table.rows[0]
-            for col_idx, cell in enumerate(header_row.cells):
-                hdr_txt = cell.text.strip().upper()
-                if "NAME" in hdr_txt or "PROMOTER" in hdr_txt:
-                    name_col_indices.add(col_idx)
+            scan_rows = min(3, len(table.rows))
+            for r_idx in range(scan_rows):
+                row_has_keyword = False
+                for col_idx, cell in enumerate(table.rows[r_idx].cells):
+                    hdr_txt = cell.text.strip().upper()
+                    if any(k in hdr_txt for k in HEADER_NAME_KEYWORDS):
+                        name_col_indices.add(col_idx)
+                        row_has_keyword = True
+                if row_has_keyword:
+                    header_row_count = max(header_row_count, r_idx + 1)
 
         entities: List[DetectedEntity] = []
         for r_idx, row in enumerate(table.rows):
@@ -694,7 +768,7 @@ class PIIRedactor:
                     continue
                 visited_cells.add(cell_id)
 
-                is_name_column = (c_idx in name_col_indices) and (r_idx > 0)
+                is_name_column = (c_idx in name_col_indices) and (r_idx >= header_row_count)
                 for p in cell.paragraphs:
                     entities.extend(self.redact_paragraph(p, pseudonym_mapper, is_name_col=is_name_column))
                 for nested_table in cell.tables:
