@@ -26,8 +26,62 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 
 # ---------------------------------------------------------------------------
-# Luhn Algorithm Checksum
+# Legal & Prospectus Vocabulary Exclusion Set (Never-Redact List)
 # ---------------------------------------------------------------------------
+NON_PII_TERMS = {
+    "companies act",
+    "sebi",
+    "red herring prospectus",
+    "book built offer",
+    "registered office",
+    "corporate office",
+    "contact person",
+    "website",
+    "fresh issue",
+    "offer for sale",
+    "equity shares",
+    "price band",
+    "floor price",
+    "cap price",
+    "risk factors",
+    "draft red herring prospectus",
+    "bse",
+    "nse",
+    "icdr regulations",
+    "sebi icdr regulations",
+    "promoter selling shareholder",
+    "promoter selling shareholders",
+    "board of directors",
+    "key managerial personnel",
+    "senior management",
+    "audit committee",
+    "articles of association",
+    "memorandum of association",
+}
+
+NON_PII_WORDS = {
+    "company", "companies", "offer", "issue", "equity", "share", "shares",
+    "board", "directors", "director", "promoter", "promoters", "shareholder",
+    "shareholders", "section", "act", "rules", "regulations", "prospectus",
+    "registered", "office", "corporate", "contact", "person", "website",
+    "email", "telephone", "phone", "details", "total", "type", "size",
+    "fresh", "sale", "price", "band", "floor", "cap", "risk", "factors",
+    "general", "bse", "nse", "sebi", "icdr", "scrr", "india", "maharashtra",
+    "pune", "mumbai", "draft", "red", "herring", "book", "built", "holding",
+    "capital", "value", "face", "amount", "aggregate", "million", "billion",
+    "table", "statement", "financial", "rights", "securities", "exchange",
+    "bank", "trust", "group", "summary", "schedule", "annexure", "index",
+    "definitions", "abbreviations", "conventions", "presentation"
+}
+
+ALL_CAPS_STOP_WORDS = {
+    "LIMITED", "PRIVATE", "PROSPECTUS", "HERRING", "RED", "OFFER",
+    "CORPORATE", "REGISTERED", "OFFICE", "DIRECTOR", "SECRETARY",
+    "TABLE", "SECTION", "STATEMENT", "FINANCIAL", "RIGHTS", "ISSUE",
+    "DRAFT", "ACT", "INDIA", "SECURITIES", "EXCHANGE", "BOARD",
+    "BANK", "COMPANY", "TRUST", "GROUP", "TOTAL", "DETAILS", "SUMMARY",
+    "DEFINITIONS", "ABBREVIATIONS", "CONVENTIONS", "PRESENTATION"
+}
 def is_valid_luhn(card_number_str: str) -> bool:
     """Validate numeric string against the Luhn algorithm checksum."""
     digits = [int(c) for c in card_number_str if c.isdigit()]
@@ -68,14 +122,14 @@ class CustomPhoneRecognizer(PatternRecognizer):
         patterns = [
             Pattern(
                 name="phone_formatted_indian",
-                regex=r"\+91[\s-]?[6-9]\d{4}[\s-]?\d{5}|\b[6-9]\d{4}[\s-]?\d{5}\b",
+                regex=r"\+?\s*91[\s-]?[6-9]\d{4}[\s-]?\d{5}|\b[6-9]\d{4}[\s-]?\d{5}\b|\+?\s*91[\s-]?\d{2,4}[\s-]?\d{3,5}[\s-]?\d{3,5}",
                 score=0.95,
             ),
             Pattern(
                 name="phone_formatted_intl",
-                regex=r"\+\d{1,3}[\s-]?\(?\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}",
+                regex=r"\+\d{1,4}[\s-]?\(?\d{2,4}\)?[\s-]?\d{6,10}",
                 score=0.95,
-            )
+            ),
         ]
         super().__init__(
             supported_entity="PHONE",
@@ -88,6 +142,8 @@ class CustomPhoneRecognizer(PatternRecognizer):
         clean = pattern_text.strip()
         digits = [c for c in clean if c.isdigit()]
         if len(digits) < 10 or len(digits) > 15:
+            return False
+        if len(set(digits)) == 1:
             return False
         return True
 
@@ -191,22 +247,22 @@ class PseudonymMapper:
     """
 
     POOLS = {
-        "PERSON": ["John Doe", "Jane Doe", "Peter Parker", "Mary Jane", "Bruce Wayne", "Clark Kent", "Diana Prince", "Tony Stark"],
-        "FULL_NAMES": ["John Doe", "Jane Doe", "Peter Parker", "Mary Jane", "Bruce Wayne", "Clark Kent", "Diana Prince", "Tony Stark"],
-        "EMAIL": ["john.doe@example.com", "jane.doe@example.com", "info@example.com", "contact@example.com", "support@example.com"],
-        "EMAIL_ADDRESS": ["john.doe@example.com", "jane.doe@example.com", "info@example.com", "contact@example.com", "support@example.com"],
-        "PHONE": ["+91 1234567890", "+91 9876543210", "+91 9123456789", "+91 9988776655"],
-        "PHONE_NUMBER": ["+91 1234567890", "+91 9876543210", "+91 9123456789", "+91 9988776655"],
-        "LOCATION": ["123, Confidential Street, City", "456, Sample Road, City", "789, Executive Avenue, City"],
-        "ADDRESSES": ["123, Confidential Street, City", "456, Sample Road, City", "789, Executive Avenue, City"],
-        "ORGANIZATION": ["Acme Corp", "Global Industries Ltd", "Sample Enterprises", "Apex Solutions Pvt Ltd"],
-        "COMPANY_NAMES": ["Acme Corp", "Global Industries Ltd", "Sample Enterprises", "Apex Solutions Pvt Ltd"],
-        "SSN_GOVT_ID": ["[REDACTED_ID]", "[REDACTED_PAN]", "[REDACTED_AADHAAR]", "[REDACTED_CIN]"],
-        "GOVT_ID": ["[REDACTED_ID]", "[REDACTED_PAN]", "[REDACTED_AADHAAR]", "[REDACTED_CIN]"],
-        "DATE_OF_BIRTH": ["01/01/1990", "15/08/1985", "20/05/1992"],
-        "DATE_TIME": ["01/01/1990", "15/08/1985", "20/05/1992"],
-        "IP_ADDRESS": ["192.168.1.1", "10.0.0.1"],
-        "CREDIT_CARD": ["4111-XXXX-XXXX-1111", "5500-XXXX-XXXX-0000"],
+        "PERSON": ["John Doe", "Jane Doe", "Peter Parker"],
+        "FULL_NAMES": ["John Doe", "Jane Doe", "Peter Parker"],
+        "EMAIL": ["john.doe@example.com", "jane.doe@example.com"],
+        "EMAIL_ADDRESS": ["john.doe@example.com", "jane.doe@example.com"],
+        "PHONE": ["+91 1234567890", "+91 9876543210"],
+        "PHONE_NUMBER": ["+91 1234567890", "+91 9876543210"],
+        "LOCATION": ["123, Confidential Street, City"],
+        "ADDRESSES": ["123, Confidential Street, City"],
+        "ORGANIZATION": ["Acme Corp", "Global Industries Ltd"],
+        "COMPANY_NAMES": ["Acme Corp", "Global Industries Ltd"],
+        "SSN_GOVT_ID": ["[REDACTED_ID]"],
+        "GOVT_ID": ["[REDACTED_ID]"],
+        "DATE_OF_BIRTH": ["01/01/1990"],
+        "DATE_TIME": ["01/01/1990"],
+        "IP_ADDRESS": ["192.168.1.1"],
+        "CREDIT_CARD": ["4111-XXXX-XXXX-1111"],
     }
 
     def __init__(self, locale: str = "en_US", seed: Optional[int] = None):
@@ -306,6 +362,7 @@ class PIIRedactor:
             registry=registry,
             supported_languages=["en"]
         )
+        self.nlp = nlp_engine.nlp.get("en") if hasattr(nlp_engine, "nlp") else None
 
         # Cache for paragraph text analysis to eliminate redundant passes
         self._analysis_cache: Dict[str, List[RecognizerResult]] = {}
@@ -320,8 +377,8 @@ class PIIRedactor:
             "PHONE_NUMBER": "PHONE",
         }
 
-    def analyze_text(self, text: str) -> List[RecognizerResult]:
-        """Analyze text with Presidio using score_threshold=0.65, fast pre-filtering and LRU caching."""
+    def analyze_text(self, text: str, is_name_col: bool = False) -> List[RecognizerResult]:
+        """Analyze text with Presidio using score_threshold=0.80, fast pre-filtering, promoter extractor, and LRU caching."""
         if not text or not text.strip():
             return []
 
@@ -335,17 +392,70 @@ class PIIRedactor:
         if not (has_letters or has_pii_symbols):
             return []
 
+        cache_key = (text, is_name_col)
         # Check analysis cache
         with self._cache_lock:
-            if text in self._analysis_cache:
-                return self._analysis_cache[text]
+            if cache_key in self._analysis_cache:
+                return self._analysis_cache[cache_key]
 
-        # Analyze with Presidio using strict score_threshold=0.65 for NER entities
+        # Analyze with Presidio using strict score_threshold=0.80 for NER entities
         results = self.analyzer.analyze(
             text=text,
             language="en",
-            score_threshold=0.65,
+            score_threshold=0.80,
         )
+
+        # 1. Contextual ALL-CAPS & Title-Cased Promoters List Extractor
+        promoter_match = re.search(r'(?i)\b(?:OUR\s+)?PROMOTERS?\s*:\s*', text)
+        if promoter_match:
+            start_pos = promoter_match.end()
+            promoter_section = text[start_pos:]
+            segments = re.split(r',|\bAND\b|\band\b', promoter_section)
+            search_offset = start_pos
+
+            for seg in segments:
+                seg_clean = seg.strip()
+                if not seg_clean:
+                    continue
+                cleaned_name = re.sub(r'^[^\w]+|[^\w]+$', '', seg_clean)
+                words = [w.strip() for w in cleaned_name.split() if w.strip()]
+
+                suffix_words = {"FAMILY", "TRUST", "LIMITED", "PRIVATE", "CORPORATION", "LLP", "INC", "PLC", "HOLDINGS", "GROUP"}
+                has_corp_suffix = any(w.upper() in suffix_words for w in words)
+
+                if 2 <= len(words) <= 4 and not has_corp_suffix:
+                    if all(w.isupper() or w.istitle() for w in words):
+                        if not any(w.lower() in NON_PII_WORDS for w in words):
+                            seg_match = re.search(re.escape(cleaned_name), text[search_offset:])
+                            if seg_match:
+                                abs_start = search_offset + seg_match.start()
+                                abs_end = search_offset + seg_match.end()
+                                search_offset = abs_end
+                                results.append(
+                                    RecognizerResult(
+                                        entity_type="PERSON",
+                                        start=abs_start,
+                                        end=abs_end,
+                                        score=0.98,
+                                    )
+                                )
+
+        # 2. Table Cell Name Recognition (if is_name_col is True)
+        if is_name_col:
+            cell_words = [w.strip() for w in re.split(r'\s+', clean_t) if w.strip()]
+            if 2 <= len(cell_words) <= 3:
+                if all(w[0].isupper() for w in cell_words if w):
+                    if not any(w.lower() in NON_PII_WORDS or w.upper() in ALL_CAPS_STOP_WORDS for w in cell_words):
+                        start_idx = text.find(clean_t)
+                        if start_idx != -1:
+                            results.append(
+                                RecognizerResult(
+                                    entity_type="PERSON",
+                                    start=start_idx,
+                                    end=start_idx + len(clean_t),
+                                    score=0.95,
+                                )
+                            )
 
         # Contextual Score Boosting for Legal/Corporate Triggers
         boosted_results: List[RecognizerResult] = []
@@ -354,21 +464,64 @@ class PIIRedactor:
         for res in results:
             score = res.score
             if has_trigger and res.entity_type in ("PERSON", "ORGANIZATION", "LOCATION"):
-                score = min(1.0, score + 0.35)
+                score = min(1.0, score + 0.20)
                 res.score = score
             boosted_results.append(res)
 
-        # Filter out monetary amounts (e.g. "₹4,200.00 million"), section headers ("Section 32"), and statutory citations
+        # Filter out NON_PII_WORDS, NON_PII_TERMS, monetary amounts, section headers, and statutory citation years
         filtered_results: List[RecognizerResult] = []
         for res in boosted_results:
-            match_str = text[res.start:res.end]
-            # Check context before/after match
-            prefix_ctx = text[max(0, res.start - 15):res.start].lower()
-            suffix_ctx = text[res.end:min(len(text), res.end + 15)].lower()
+            raw_match = text[res.start:res.end].strip()
+            match_lower = raw_match.lower()
+            words = [w.strip() for w in re.split(r'\s+', raw_match) if w.strip()]
+            word_lowers = [w.lower() for w in words]
+
+            # 1. Strict Confidence Thresholds
+            if res.entity_type in ("PERSON", "ORGANIZATION", "LOCATION"):
+                if res.score < 0.80:
+                    continue
+                # Higher confidence required for single-word entities
+                if len(words) == 1 and res.entity_type in ("PERSON", "ORGANIZATION") and res.score < 0.85:
+                    continue
+
+            # 2. Non-PII Boilerplate Exclusion Filter
+            if res.entity_type in ("PERSON", "ORGANIZATION", "LOCATION"):
+                if match_lower in NON_PII_WORDS or match_lower in NON_PII_TERMS:
+                    continue
+                if len(words) == 1 and word_lowers[0] in NON_PII_WORDS:
+                    continue
+                if all(w in NON_PII_WORDS or w.upper() in ALL_CAPS_STOP_WORDS for w in word_lowers):
+                    continue
+
+            # 3. Person Entity Validation (POS & Context check)
+            if res.entity_type == "PERSON":
+                prefix_ctx = text[max(0, res.start - 30):res.start].lower()
+                has_person_trigger = any(t in prefix_ctx for t in ["mr.", "ms.", "mrs.", "dr.", "promoter:", "promoter", "director:", "officer", "secretary", "chairman", "signatory", "manager", "kmp"])
+
+                if any(w in NON_PII_WORDS for w in word_lowers) and not has_person_trigger:
+                    continue
+
+                if len(words) == 1 and not has_person_trigger:
+                    if self.nlp:
+                        sub_doc = self.nlp(raw_match)
+                        if not any(token.pos_ == "PROPN" for token in sub_doc):
+                            continue
+                    else:
+                        continue
+
+            # 4. Contextual Exclusions (monetary, page numbers, statutory citations)
+            prefix_ctx = text[max(0, res.start - 25):res.start].lower()
+            suffix_ctx = text[res.end:min(len(text), res.end + 25)].lower()
 
             if any(term in prefix_ctx or term in suffix_ctx for term in ["₹", "rs.", "rupees", "million", "crore", "lakh", "section", "clause", "page"]):
-                if res.entity_type in ("PHONE", "DATE_OF_BIRTH", "LOCATION", "PERSON"):
+                if res.entity_type in ("PHONE", "DATE_OF_BIRTH", "LOCATION"):
                     continue
+
+            # Protect Statutory Citation Years (e.g. "Companies Act, 2013", "SEBI Regulations, 2018")
+            if res.entity_type in ("DATE_OF_BIRTH", "DATE_TIME") and re.match(r"^\d{4}$", raw_match):
+                if any(stat in prefix_ctx for stat in ["act", "regulations", "rules", "section", "clause", "dated", "year", "fy", "prospectus"]):
+                    continue
+
             filtered_results.append(res)
 
         # Store in cache (limit cache size to 5,000 entries)
@@ -423,7 +576,7 @@ class PIIRedactor:
         return resolved
 
     def redact_paragraph(
-        self, paragraph: Paragraph, pseudonym_mapper: PseudonymMapper
+        self, paragraph: Paragraph, pseudonym_mapper: PseudonymMapper, is_name_col: bool = False
     ) -> List[DetectedEntity]:
         """
         Redact PII in a docx Paragraph while preserving run-level formatting
@@ -433,7 +586,7 @@ class PIIRedactor:
         if not full_text or not full_text.strip():
             return []
 
-        analysis_results = self.analyze_text(full_text)
+        analysis_results = self.analyze_text(full_text, is_name_col=is_name_col)
         resolved_results = self._resolve_overlapping_entities(analysis_results)
 
         if not resolved_results:
@@ -524,16 +677,26 @@ class PIIRedactor:
         if visited_cells is None:
             visited_cells = set()
 
+        # Identify column indices where header contains "NAME" or "PROMOTER"
+        name_col_indices = set()
+        if table.rows:
+            header_row = table.rows[0]
+            for col_idx, cell in enumerate(header_row.cells):
+                hdr_txt = cell.text.strip().upper()
+                if "NAME" in hdr_txt or "PROMOTER" in hdr_txt:
+                    name_col_indices.add(col_idx)
+
         entities: List[DetectedEntity] = []
-        for row in table.rows:
-            for cell in row.cells:
+        for r_idx, row in enumerate(table.rows):
+            for c_idx, cell in enumerate(row.cells):
                 cell_id = id(cell._element)
                 if cell_id in visited_cells:
                     continue
                 visited_cells.add(cell_id)
 
+                is_name_column = (c_idx in name_col_indices) and (r_idx > 0)
                 for p in cell.paragraphs:
-                    entities.extend(self.redact_paragraph(p, pseudonym_mapper))
+                    entities.extend(self.redact_paragraph(p, pseudonym_mapper, is_name_col=is_name_column))
                 for nested_table in cell.tables:
                     entities.extend(self.process_table(nested_table, pseudonym_mapper, visited_cells))
         return entities
