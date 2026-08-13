@@ -56,8 +56,8 @@ export default function Home() {
       setBackendStatus('connecting');
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
-        
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+
         const response = await fetch(`${apiUrl.replace(/\/$/, '')}/health`, {
           signal: controller.signal,
         });
@@ -137,6 +137,12 @@ export default function Home() {
       );
     }, 5000);
 
+    // 60-second AbortController safety timeout
+    const controller = new AbortController();
+    const abortTimeout = setTimeout(() => {
+      controller.abort();
+    }, 60000);
+
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -146,16 +152,22 @@ export default function Home() {
         {
           method: 'POST',
           body: formData,
+          signal: controller.signal,
         }
       );
 
       if (!response.ok) {
         let errMessage = 'Redaction processing failed';
-        try {
-          const errData = await response.json();
-          errMessage = errData.detail || errMessage;
-        } catch (_) {
-          errMessage = `Server returned status ${response.status}`;
+        if (response.status === 502 || response.status === 504) {
+          errMessage =
+            'Backend response delayed. Render free tier may still be warming up (~30-50s). Please try clicking Redact again.';
+        } else {
+          try {
+            const errData = await response.json();
+            errMessage = errData.detail || errMessage;
+          } catch (_) {
+            errMessage = `Server returned status ${response.status}`;
+          }
         }
         throw new Error(errMessage);
       }
@@ -170,9 +182,16 @@ export default function Home() {
       });
       setBackendStatus('ready');
     } catch (err) {
-      setRedactError(err.message || 'Failed to connect to the backend engine.');
+      if (err.name === 'AbortError') {
+        setRedactError(
+          'Backend response delayed. Render free tier may still be warming up (~30-50s). Please try clicking Redact again.'
+        );
+      } else {
+        setRedactError(err.message || 'Failed to connect to the backend engine.');
+      }
     } finally {
       clearTimeout(warmupTimer);
+      clearTimeout(abortTimeout);
       setIsRedacting(false);
       setRedactionProgressText('Analyzing & Redacting PII...');
     }
@@ -202,8 +221,13 @@ export default function Home() {
     setIsEvaluating(true);
     setEvalError(null);
 
+    const controller = new AbortController();
+    const abortTimeout = setTimeout(() => controller.abort(), 60000);
+
     try {
-      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/evaluate`);
+      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/evaluate`, {
+        signal: controller.signal,
+      });
       if (!response.ok) {
         const errData = await response.json();
         throw new Error(errData.detail || 'Evaluation request failed');
@@ -212,8 +236,15 @@ export default function Home() {
       setEvalResult(data);
       setBackendStatus('ready');
     } catch (err) {
-      setEvalError(err.message || 'Failed to execute benchmark evaluation.');
+      if (err.name === 'AbortError') {
+        setEvalError(
+          'Evaluation request timed out. Render free tier may still be warming up. Please try again.'
+        );
+      } else {
+        setEvalError(err.message || 'Failed to execute benchmark evaluation.');
+      }
     } finally {
+      clearTimeout(abortTimeout);
       setIsEvaluating(false);
     }
   };
@@ -249,21 +280,21 @@ export default function Home() {
   const renderStatusBadge = () => {
     if (backendStatus === 'ready') {
       return (
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium whitespace-nowrap">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           Backend Ready
         </div>
       );
     } else if (backendStatus === 'connecting') {
       return (
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-medium">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-medium whitespace-nowrap">
           <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
           Connecting / Waking server...
         </div>
       );
     } else {
       return (
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-medium">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-medium whitespace-nowrap">
           <span className="w-2 h-2 rounded-full bg-rose-400" />
           Server Offline
         </div>
@@ -313,19 +344,20 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
             {/* Live Backend Status Badge */}
             {renderStatusBadge()}
 
-            {/* API URL Config Box */}
-            <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-1.5 text-xs">
-              <Lock className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-slate-400 font-medium">API Endpoint:</span>
+            {/* Expanded Full-Width API URL Config Box */}
+            <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-1.5 text-xs w-full max-w-lg">
+              <Lock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <span className="text-slate-400 font-medium flex-shrink-0">API Endpoint:</span>
               <input
                 type="text"
                 value={apiUrl}
                 onChange={(e) => setApiUrl(e.target.value)}
-                className="bg-transparent text-slate-200 focus:outline-none w-56 font-mono text-[11px]"
+                placeholder="https://your-backend.onrender.com"
+                className="bg-transparent text-slate-200 focus:outline-none w-full font-mono text-[11px] truncate"
               />
             </div>
           </div>
