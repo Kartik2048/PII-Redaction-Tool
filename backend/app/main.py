@@ -39,6 +39,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -55,7 +56,7 @@ def root_info():
 
 @app.get("/health", tags=["Health"])
 def health_check():
-    """Container health monitoring endpoint for Hugging Face Spaces."""
+    """Container health monitoring endpoint for Hugging Face / Render Spaces."""
     return {"status": "healthy"}
 
 

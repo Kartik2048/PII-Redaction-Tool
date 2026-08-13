@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import {
   ShieldCheck,
@@ -27,11 +27,18 @@ export default function Home() {
     process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7860'
   );
   const [activeTab, setActiveTab] = useState('redact'); // 'redact' | 'evaluate'
+  const [backendStatus, setBackendStatus] = useState('connecting'); // 'connecting' | 'ready' | 'offline'
+
+  // Ref for native file input picker
+  const fileInputRef = useRef(null);
 
   // Redaction Tab State
   const [file, setFile] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isRedacting, setIsRedacting] = useState(false);
+  const [redactionProgressText, setRedactionProgressText] = useState(
+    'Analyzing & Redacting PII...'
+  );
   const [redactionResult, setRedactionResult] = useState(null);
   const [redactError, setRedactError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -42,12 +49,59 @@ export default function Home() {
   const [evalResult, setEvalResult] = useState(null);
   const [evalError, setEvalError] = useState(null);
 
+  // Auto Health-Check & Render Cold Start Warmup Hook
+  useEffect(() => {
+    let isMounted = true;
+    const checkHealth = async () => {
+      setBackendStatus('connecting');
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        
+        const response = await fetch(`${apiUrl.replace(/\/$/, '')}/health`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (response.ok && isMounted) {
+          setBackendStatus('ready');
+          return;
+        }
+      } catch (err) {
+        // Retry once after short delay for Render cold-starts
+        try {
+          const retryRes = await fetch(`${apiUrl.replace(/\/$/, '')}/health`);
+          if (retryRes.ok && isMounted) {
+            setBackendStatus('ready');
+            return;
+          }
+        } catch (retryErr) {
+          // Ignore retry error
+        }
+      }
+      if (isMounted) {
+        setBackendStatus('offline');
+      }
+    };
+
+    checkHealth();
+    return () => {
+      isMounted = false;
+    };
+  }, [apiUrl]);
+
+  const handleDropzoneClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
-    if (selected && selected.name.toLowerCase().endswith('.docx')) {
+    if (selected && selected.name.toLowerCase().endsWith('.docx')) {
       setFile(selected);
       setRedactError(null);
-    } else {
+    } else if (selected) {
       setRedactError('Please select a valid Microsoft Word (.docx) file.');
     }
   };
@@ -73,7 +127,15 @@ export default function Home() {
     setIsRedacting(true);
     setRedactError(null);
     setRedactionResult(null);
+    setRedactionProgressText('Analyzing & Redacting PII...');
     const startTime = performance.now();
+
+    // Cold-start detection timer: update message after 5 seconds
+    const warmupTimer = setTimeout(() => {
+      setRedactionProgressText(
+        'Server is waking up from Render sleep mode (takes ~30s on first load)...'
+      );
+    }, 5000);
 
     try {
       const formData = new FormData();
@@ -88,8 +150,14 @@ export default function Home() {
       );
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.detail || 'Redaction processing failed');
+        let errMessage = 'Redaction processing failed';
+        try {
+          const errData = await response.json();
+          errMessage = errData.detail || errMessage;
+        } catch (_) {
+          errMessage = `Server returned status ${response.status}`;
+        }
+        throw new Error(errMessage);
       }
 
       const data = await response.json();
@@ -100,10 +168,13 @@ export default function Home() {
         ...data,
         processingTime,
       });
+      setBackendStatus('ready');
     } catch (err) {
       setRedactError(err.message || 'Failed to connect to the backend engine.');
     } finally {
+      clearTimeout(warmupTimer);
       setIsRedacting(false);
+      setRedactionProgressText('Analyzing & Redacting PII...');
     }
   };
 
@@ -139,6 +210,7 @@ export default function Home() {
       }
       const data = await response.json();
       setEvalResult(data);
+      setBackendStatus('ready');
     } catch (err) {
       setEvalError(err.message || 'Failed to execute benchmark evaluation.');
     } finally {
@@ -171,6 +243,31 @@ export default function Home() {
         return <Calendar className="w-4 h-4 text-teal-400" />;
       default:
         return <ShieldCheck className="w-4 h-4 text-gray-400" />;
+    }
+  };
+
+  const renderStatusBadge = () => {
+    if (backendStatus === 'ready') {
+      return (
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          Backend Ready
+        </div>
+      );
+    } else if (backendStatus === 'connecting') {
+      return (
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-medium">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+          Connecting / Waking server...
+        </div>
+      );
+    } else {
+      return (
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-medium">
+          <span className="w-2 h-2 rounded-full bg-rose-400" />
+          Server Offline
+        </div>
+      );
     }
   };
 
@@ -216,16 +313,21 @@ export default function Home() {
             </div>
           </div>
 
-          {/* API URL Config Box */}
-          <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-1.5 text-xs">
-            <Lock className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-400 font-medium">API Endpoint:</span>
-            <input
-              type="text"
-              value={apiUrl}
-              onChange={(e) => setApiUrl(e.target.value)}
-              className="bg-transparent text-slate-200 focus:outline-none w-56 font-mono text-[11px]"
-            />
+          <div className="flex items-center gap-3">
+            {/* Live Backend Status Badge */}
+            {renderStatusBadge()}
+
+            {/* API URL Config Box */}
+            <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-1.5 text-xs">
+              <Lock className="w-3.5 h-3.5 text-slate-400" />
+              <span className="text-slate-400 font-medium">API Endpoint:</span>
+              <input
+                type="text"
+                value={apiUrl}
+                onChange={(e) => setApiUrl(e.target.value)}
+                className="bg-transparent text-slate-200 focus:outline-none w-56 font-mono text-[11px]"
+              />
+            </div>
           </div>
         </div>
       </header>
@@ -264,6 +366,7 @@ export default function Home() {
             {/* Upload Zone */}
             <div className="glass-panel rounded-2xl p-8">
               <div
+                onClick={handleDropzoneClick}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setIsDragOver(true);
@@ -275,16 +378,14 @@ export default function Home() {
                 }`}
               >
                 <input
+                  ref={fileInputRef}
                   type="file"
                   accept=".docx"
                   onChange={handleFileChange}
                   className="hidden"
                   id="docx-file-input"
                 />
-                <label
-                  htmlFor="docx-file-input"
-                  className="cursor-pointer flex flex-col items-center"
-                >
+                <div className="flex flex-col items-center pointer-events-none">
                   <div className="p-4 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 mb-4">
                     <UploadCloud className="w-10 h-10" />
                   </div>
@@ -298,7 +399,7 @@ export default function Home() {
                   <p className="text-xs text-slate-500 mt-2">
                     Supports Red Herring Prospectus.docx with layout & run formatting preservation
                   </p>
-                </label>
+                </div>
               </div>
 
               {redactError && (
@@ -319,7 +420,7 @@ export default function Home() {
                   {isRedacting ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      Analyzing & Redacting PII...
+                      <span>{redactionProgressText}</span>
                     </>
                   ) : (
                     <>
