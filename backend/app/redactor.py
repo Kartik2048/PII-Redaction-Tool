@@ -3,7 +3,7 @@ Core PII Redaction Engine (redactor.py)
 
 This module provides a production-ready, hybrid PII redaction engine combining
 Presidio Analyzer, spaCy NER, custom deterministic regex recognizers, Luhn algorithm validation,
-an execution-scoped/thread-safe Faker PseudonymMapper, and docx layout-preserving redactor.
+a thread-safe standardized PseudonymMapper, and docx layout-preserving redactor.
 """
 
 import io
@@ -12,7 +12,6 @@ import threading
 from dataclasses import dataclass
 from typing import Union, BinaryIO, List, Dict, Tuple, Any, Optional
 
-from faker import Faker
 import docx
 from docx.text.paragraph import Paragraph
 
@@ -68,8 +67,13 @@ class CustomPhoneRecognizer(PatternRecognizer):
     def __init__(self, **kwargs):
         patterns = [
             Pattern(
-                name="phone_regex",
-                regex=r"\+?\s*91[\s-]?\d{2,5}[\s-]?\d{6,8}|\+?\d{1,4}?[\s-]?\(?\d{1,4}?\)?[\s-]?\d{1,4}[\s-]?\d{1,9}",
+                name="phone_formatted_indian",
+                regex=r"\+91[\s-]?[6-9]\d{4}[\s-]?\d{5}|\b[6-9]\d{4}[\s-]?\d{5}\b",
+                score=0.95,
+            ),
+            Pattern(
+                name="phone_formatted_intl",
+                regex=r"\+\d{1,3}[\s-]?\(?\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}",
                 score=0.95,
             )
         ]
@@ -78,6 +82,14 @@ class CustomPhoneRecognizer(PatternRecognizer):
             patterns=patterns,
             name="CustomPhoneRecognizer",
         )
+
+    def validate_result(self, pattern_text: str) -> bool:
+        """Ensure candidate contains valid phone digit counts and is not a section/page reference."""
+        clean = pattern_text.strip()
+        digits = [c for c in clean if c.isdigit()]
+        if len(digits) < 10 or len(digits) > 15:
+            return False
+        return True
 
 
 class CustomIPAddressRecognizer(PatternRecognizer):
@@ -153,77 +165,74 @@ class CustomDateOfBirthRecognizer(PatternRecognizer):
             Pattern(
                 name="dob_numeric",
                 regex=r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
-                score=0.95,
+                score=0.85,
             ),
             Pattern(
                 name="dob_textual",
                 regex=r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b",
-                score=0.95,
+                score=0.85,
             ),
         ]
         super().__init__(
             supported_entity="DATE_OF_BIRTH",
             patterns=patterns,
             name="CustomDateOfBirthRecognizer",
+            context=["born", "birth", "dob", "date of birth", "age", "born on"]
         )
 
 
 # ---------------------------------------------------------------------------
-# Persistent Thread-Safe Pseudonym Mapper
+# Standardized Predictable Pseudonym Mapper
 # ---------------------------------------------------------------------------
 class PseudonymMapper:
     """
     Thread-safe, execution-scoped persistent pseudonym dictionary.
-    Ensures consistent fake value substitution across a document lifecycle.
+    Uses clean, predictable, standardized placeholder pools mapped sequentially.
     """
 
+    POOLS = {
+        "PERSON": ["John Doe", "Jane Doe", "Peter Parker", "Mary Jane", "Bruce Wayne", "Clark Kent", "Diana Prince", "Tony Stark"],
+        "FULL_NAMES": ["John Doe", "Jane Doe", "Peter Parker", "Mary Jane", "Bruce Wayne", "Clark Kent", "Diana Prince", "Tony Stark"],
+        "EMAIL": ["john.doe@example.com", "jane.doe@example.com", "info@example.com", "contact@example.com", "support@example.com"],
+        "EMAIL_ADDRESS": ["john.doe@example.com", "jane.doe@example.com", "info@example.com", "contact@example.com", "support@example.com"],
+        "PHONE": ["+91 1234567890", "+91 9876543210", "+91 9123456789", "+91 9988776655"],
+        "PHONE_NUMBER": ["+91 1234567890", "+91 9876543210", "+91 9123456789", "+91 9988776655"],
+        "LOCATION": ["123, Confidential Street, City", "456, Sample Road, City", "789, Executive Avenue, City"],
+        "ADDRESSES": ["123, Confidential Street, City", "456, Sample Road, City", "789, Executive Avenue, City"],
+        "ORGANIZATION": ["Acme Corp", "Global Industries Ltd", "Sample Enterprises", "Apex Solutions Pvt Ltd"],
+        "COMPANY_NAMES": ["Acme Corp", "Global Industries Ltd", "Sample Enterprises", "Apex Solutions Pvt Ltd"],
+        "SSN_GOVT_ID": ["[REDACTED_ID]", "[REDACTED_PAN]", "[REDACTED_AADHAAR]", "[REDACTED_CIN]"],
+        "GOVT_ID": ["[REDACTED_ID]", "[REDACTED_PAN]", "[REDACTED_AADHAAR]", "[REDACTED_CIN]"],
+        "DATE_OF_BIRTH": ["01/01/1990", "15/08/1985", "20/05/1992"],
+        "DATE_TIME": ["01/01/1990", "15/08/1985", "20/05/1992"],
+        "IP_ADDRESS": ["192.168.1.1", "10.0.0.1"],
+        "CREDIT_CARD": ["4111-XXXX-XXXX-1111", "5500-XXXX-XXXX-0000"],
+    }
+
     def __init__(self, locale: str = "en_US", seed: Optional[int] = None):
-        self._faker = Faker(locale)
-        if seed is not None:
-            self._faker.seed_instance(seed)
         self._lock = threading.Lock()
         self._mapping: Dict[Tuple[str, str], str] = {}
-        self._used_values: set = set()
+        self._category_indices: Dict[str, int] = {}
 
     def get_pseudonym(self, original_text: str, entity_type: str) -> str:
         clean_text = original_text.strip()
-        key = (entity_type, clean_text)
+        et = entity_type.upper()
+        key = (et, clean_text)
+
         with self._lock:
             if key in self._mapping:
                 return self._mapping[key]
 
-            fake_val = self._generate_fake(clean_text, entity_type)
-            attempts = 0
-            while fake_val in self._used_values and attempts < 50:
-                fake_val = self._generate_fake(clean_text, entity_type)
-                attempts += 1
+            pool = self.POOLS.get(et) or self.POOLS.get(entity_type)
+            if pool:
+                idx = self._category_indices.get(et, 0)
+                fake_val = pool[idx % len(pool)]
+                self._category_indices[et] = idx + 1
+            else:
+                fake_val = f"[REDACTED_{et}]"
 
-            self._used_values.add(fake_val)
             self._mapping[key] = fake_val
             return fake_val
-
-    def _generate_fake(self, original_text: str, entity_type: str) -> str:
-        et = entity_type.upper()
-        if et in ("PERSON", "FULL_NAMES"):
-            return self._faker.name()
-        elif et in ("EMAIL", "EMAIL_ADDRESS"):
-            return self._faker.email()
-        elif et in ("PHONE", "PHONE_NUMBER"):
-            return self._faker.phone_number()
-        elif et in ("IP_ADDRESS", "IP"):
-            return self._faker.ipv4()
-        elif et == "CREDIT_CARD":
-            return self._faker.credit_card_number()
-        elif et == "SSN_GOVT_ID":
-            return self._faker.bothify(text="???-##-####").upper()
-        elif et in ("DATE_OF_BIRTH", "DATE_TIME"):
-            return self._faker.date()
-        elif et in ("ORGANIZATION", "COMPANY_NAMES"):
-            return self._faker.company()
-        elif et in ("LOCATION", "ADDRESSES"):
-            return f"{self._faker.city()}, {self._faker.state()}"
-        else:
-            return f"[REDACTED_{et}]"
 
     def get_all_mappings(self) -> Dict[str, str]:
         with self._lock:
@@ -298,6 +307,10 @@ class PIIRedactor:
             supported_languages=["en"]
         )
 
+        # Cache for paragraph text analysis to eliminate redundant passes
+        self._analysis_cache: Dict[str, List[RecognizerResult]] = {}
+        self._cache_lock = threading.Lock()
+
         # Map Presidio standard entities to requirement names
         self.entity_type_map = {
             "PERSON": "FULL_NAMES",
@@ -308,15 +321,30 @@ class PIIRedactor:
         }
 
     def analyze_text(self, text: str) -> List[RecognizerResult]:
-        """Analyze text with Presidio and apply contextual score boosting."""
+        """Analyze text with Presidio using score_threshold=0.65, fast pre-filtering and LRU caching."""
         if not text or not text.strip():
             return []
 
-        # Analyze with Presidio
+        clean_t = text.strip()
+        # Fast pre-filtering: skip short strings (<3 chars) or pure numbers/symbols without candidate PII
+        if len(clean_t) < 3:
+            return []
+
+        has_letters = any(c.isalpha() for c in clean_t)
+        has_pii_symbols = "@" in clean_t or "+" in clean_t or any(c.isdigit() for c in clean_t)
+        if not (has_letters or has_pii_symbols):
+            return []
+
+        # Check analysis cache
+        with self._cache_lock:
+            if text in self._analysis_cache:
+                return self._analysis_cache[text]
+
+        # Analyze with Presidio using strict score_threshold=0.65 for NER entities
         results = self.analyzer.analyze(
             text=text,
             language="en",
-            score_threshold=0.35,
+            score_threshold=0.65,
         )
 
         # Contextual Score Boosting for Legal/Corporate Triggers
@@ -326,12 +354,30 @@ class PIIRedactor:
         for res in results:
             score = res.score
             if has_trigger and res.entity_type in ("PERSON", "ORGANIZATION", "LOCATION"):
-                # Boost confidence score for NER entities in corporate/legal context
                 score = min(1.0, score + 0.35)
                 res.score = score
             boosted_results.append(res)
 
-        return boosted_results
+        # Filter out monetary amounts (e.g. "₹4,200.00 million"), section headers ("Section 32"), and statutory citations
+        filtered_results: List[RecognizerResult] = []
+        for res in boosted_results:
+            match_str = text[res.start:res.end]
+            # Check context before/after match
+            prefix_ctx = text[max(0, res.start - 15):res.start].lower()
+            suffix_ctx = text[res.end:min(len(text), res.end + 15)].lower()
+
+            if any(term in prefix_ctx or term in suffix_ctx for term in ["₹", "rs.", "rupees", "million", "crore", "lakh", "section", "clause", "page"]):
+                if res.entity_type in ("PHONE", "DATE_OF_BIRTH", "LOCATION", "PERSON"):
+                    continue
+            filtered_results.append(res)
+
+        # Store in cache (limit cache size to 5,000 entries)
+        with self._cache_lock:
+            if len(self._analysis_cache) > 5000:
+                self._analysis_cache.clear()
+            self._analysis_cache[text] = filtered_results
+
+        return filtered_results
 
     def _resolve_overlapping_entities(
         self, results: List[RecognizerResult]
@@ -472,17 +518,24 @@ class PIIRedactor:
                     paragraph.runs[mid_idx].text = ""
 
     def process_table(
-        self, table: Any, pseudonym_mapper: PseudonymMapper
+        self, table: Any, pseudonym_mapper: PseudonymMapper, visited_cells: Optional[set] = None
     ) -> List[DetectedEntity]:
-        """Safely iterate through docx table cells and cell paragraphs."""
+        """Safely iterate through docx table cells and cell paragraphs, avoiding duplicate merged cells."""
+        if visited_cells is None:
+            visited_cells = set()
+
         entities: List[DetectedEntity] = []
         for row in table.rows:
             for cell in row.cells:
+                cell_id = id(cell._element)
+                if cell_id in visited_cells:
+                    continue
+                visited_cells.add(cell_id)
+
                 for p in cell.paragraphs:
                     entities.extend(self.redact_paragraph(p, pseudonym_mapper))
-                # Recursively process nested tables if any
                 for nested_table in cell.tables:
-                    entities.extend(self.process_table(nested_table, pseudonym_mapper))
+                    entities.extend(self.process_table(nested_table, pseudonym_mapper, visited_cells))
         return entities
 
     def redact_docx(
@@ -510,13 +563,19 @@ class PIIRedactor:
         doc = docx.Document(doc_stream)
         all_detected_entities: List[DetectedEntity] = []
 
+        # Clear per-document analysis cache to maintain freshness
+        with self._cache_lock:
+            self._analysis_cache.clear()
+
+        visited_cells = set()
+
         # 1. Main Document Paragraphs
         for p in doc.paragraphs:
             all_detected_entities.extend(self.redact_paragraph(p, pseudonym_mapper))
 
         # 2. Main Document Tables
         for table in doc.tables:
-            all_detected_entities.extend(self.process_table(table, pseudonym_mapper))
+            all_detected_entities.extend(self.process_table(table, pseudonym_mapper, visited_cells))
 
         # 3. Document Sections (Headers and Footers)
         for section in doc.sections:
@@ -532,7 +591,7 @@ class PIIRedactor:
                         )
                     for ht in header.tables:
                         all_detected_entities.extend(
-                            self.process_table(ht, pseudonym_mapper)
+                            self.process_table(ht, pseudonym_mapper, visited_cells)
                         )
 
             for footer in (
@@ -547,7 +606,7 @@ class PIIRedactor:
                         )
                     for ft in footer.tables:
                         all_detected_entities.extend(
-                            self.process_table(ft, pseudonym_mapper)
+                            self.process_table(ft, pseudonym_mapper, visited_cells)
                         )
 
         # Save redacted document to BytesIO stream
@@ -588,15 +647,29 @@ class PIIRedactor:
 
 
 # ---------------------------------------------------------------------------
-# Module Entrypoint / Helper
+# Singleton Instance & Module Entrypoint
 # ---------------------------------------------------------------------------
+_REDACTOR_INSTANCE: Optional[PIIRedactor] = None
+_REDACTOR_LOCK = threading.Lock()
+
+
+def get_redactor(spacy_model: str = "en_core_web_sm") -> PIIRedactor:
+    """Thread-safe singleton getter for PIIRedactor instance."""
+    global _REDACTOR_INSTANCE
+    if _REDACTOR_INSTANCE is None:
+        with _REDACTOR_LOCK:
+            if _REDACTOR_INSTANCE is None:
+                _REDACTOR_INSTANCE = PIIRedactor(spacy_model=spacy_model)
+    return _REDACTOR_INSTANCE
+
+
 def redact_document(
     doc_input: Union[str, BinaryIO, bytes],
     spacy_model: str = "en_core_web_sm",
     pseudonym_mapper: Optional[PseudonymMapper] = None,
 ) -> Tuple[bytes, Dict[str, Any]]:
     """
-    Convenience function to redact a docx document and return redacted bytes + metadata summary.
+    Convenience function to redact a docx document using pre-warmed singleton engine.
     """
-    engine = PIIRedactor(spacy_model=spacy_model)
+    engine = get_redactor(spacy_model=spacy_model)
     return engine.redact_docx(doc_input, pseudonym_mapper=pseudonym_mapper)

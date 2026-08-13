@@ -18,7 +18,7 @@ from fastapi.responses import Response, JSONResponse
 # Ensure backend root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.redactor import redact_document
+from app.redactor import redact_document, get_redactor
 from app.evaluator import evaluate_redaction_engine
 
 app = FastAPI(
@@ -26,6 +26,15 @@ app = FastAPI(
     description="Backend API for PII detection, pseudonym redaction, and evaluation metrics.",
     version="1.0.0",
 )
+
+# Pre-warm spaCy & Presidio model on FastAPI startup
+@app.on_event("startup")
+def warmup_models():
+    """Pre-load spaCy model and Presidio engine into memory on startup."""
+    try:
+        get_redactor()
+    except Exception as e:
+        print(f"Model pre-warm warning: {e}")
 
 # Enable CORS Middleware
 origins = ["*"]

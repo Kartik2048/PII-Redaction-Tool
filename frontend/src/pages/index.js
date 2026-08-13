@@ -24,7 +24,7 @@ import {
 
 export default function Home() {
   const [apiUrl, setApiUrl] = useState(
-    process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7860'
+    process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:7860'
   );
   const [activeTab, setActiveTab] = useState('redact'); // 'redact' | 'evaluate'
   const [backendStatus, setBackendStatus] = useState('connecting'); // 'connecting' | 'ready' | 'offline'
@@ -133,15 +133,15 @@ export default function Home() {
     // Cold-start detection timer: update message after 5 seconds
     const warmupTimer = setTimeout(() => {
       setRedactionProgressText(
-        'Server is waking up from Render sleep mode (takes ~30s on first load)...'
+        'Analyzing large prospectus document (processing thousands of paragraphs & tables)...'
       );
     }, 5000);
 
-    // 60-second AbortController safety timeout
+    // Extended 180-second (3 minute) AbortController timeout for large prospectus files
     const controller = new AbortController();
     const abortTimeout = setTimeout(() => {
       controller.abort();
-    }, 60000);
+    }, 180000);
 
     try {
       const formData = new FormData();
@@ -184,7 +184,7 @@ export default function Home() {
     } catch (err) {
       if (err.name === 'AbortError') {
         setRedactError(
-          'Backend response delayed. Render free tier may still be warming up (~30-50s). Please try clicking Redact again.'
+          'Processing large document timed out after 3 minutes. Please check server logs.'
         );
       } else {
         setRedactError(err.message || 'Failed to connect to the backend engine.');
@@ -356,7 +356,7 @@ export default function Home() {
                 type="text"
                 value={apiUrl}
                 onChange={(e) => setApiUrl(e.target.value)}
-                placeholder="https://your-backend.onrender.com"
+                placeholder="http://127.0.0.1:7860"
                 className="bg-transparent text-slate-200 focus:outline-none w-full font-mono text-[11px] truncate"
               />
             </div>
